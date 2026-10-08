@@ -1,0 +1,7 @@
+project_id = "cairo-web"
+
+[db]
+port = 54322
+
+[api]
+port = 54321

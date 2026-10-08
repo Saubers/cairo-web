@@ -1,0 +1,16 @@
+@import "tailwindcss";
+
+/* Loads the Cairo brand palette and typography defined in tailwind.config.ts
+   (theme.extend.colors / theme.extend.fontFamily) into Tailwind v4. */
+@config "../../tailwind.config.ts";
+
+/* Smooth-scrolls to in-page anchors (e.g. the "#contacto" link in the
+   Navbar/drawer) instead of jumping instantly. */
+html {
+  scroll-behavior: smooth;
+}
+
+/* The storefront keeps a single, consistent brand look regardless of the
+   user's OS color scheme preference — no automatic dark mode. Background,
+   text color, and the default font are applied via Tailwind utility
+   classes on <body> in src/app/layout.tsx, not here. */
