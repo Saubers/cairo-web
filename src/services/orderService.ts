@@ -229,7 +229,7 @@ async function resolveCustomerEmails(userIds: string[]): Promise<Map<string, str
     return emailById;
   }
 
-  const service = createServiceClient();
+  const service = createServiceClient(process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   await Promise.all(
     uniqueIds.map(async (userId) => {
@@ -381,7 +381,7 @@ export async function getOrderConfirmation(
     return null;
   }
 
-  const service = createServiceClient();
+  const service = createServiceClient(process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
   const { data: orderRow, error: orderError } = await service
     .from("orders")

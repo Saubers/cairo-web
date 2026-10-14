@@ -157,15 +157,19 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
     hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
   });
 
-  // Fail with a specific, greppable message instead of letting the Supabase
-  // SDK's generic "supabaseKey is required." reach the outer catch below —
-  // this makes the root cause (missing env var in this exact runtime)
-  // unambiguous in the Cloudflare Pages function logs.
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+  // Resolved once, into a local `const`, and passed explicitly into
+  // `createServiceClient` below instead of letting that function read
+  // `process.env` internally. This fails with a specific, greppable message
+  // instead of letting the Supabase SDK's generic "supabaseKey is
+  // required." reach the outer catch — the root cause (missing env var in
+  // this runtime) is unambiguous in the Cloudflare Pages function logs.
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+  if (!serviceRoleKey) {
     throw new Error("CRITICAL: SUPABASE_SERVICE_ROLE_KEY is missing in Edge Runtime");
   }
 
-  const service = createServiceClient();
+  const service = createServiceClient(serviceRoleKey);
 
   const productIds = parsed.items.map((item) => item.productId);
 

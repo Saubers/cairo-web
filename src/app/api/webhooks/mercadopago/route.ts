@@ -156,7 +156,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const paymentResponse = await payment.get({ id: dataId });
 
   if (paymentResponse.status === "approved" && paymentResponse.external_reference) {
-    const service = createServiceClient();
+    const service = createServiceClient(process.env.SUPABASE_SERVICE_ROLE_KEY!);
     const orderId = paymentResponse.external_reference;
 
     const { data: existingOrder } = await service
