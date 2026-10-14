@@ -149,6 +149,22 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
     data: { user },
   } = await supabase.auth.getUser();
 
+  // [DIAGNOSTIC] Logs only boolean presence (never the actual secret value)
+  // so Cloudflare Pages' function logs reveal whether the service-role key
+  // is actually reaching this request's `process.env`, without leaking it.
+  console.log("DEBUG ENV:", {
+    hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
+    hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+  });
+
+  // Fail with a specific, greppable message instead of letting the Supabase
+  // SDK's generic "supabaseKey is required." reach the outer catch below —
+  // this makes the root cause (missing env var in this exact runtime)
+  // unambiguous in the Cloudflare Pages function logs.
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error("CRITICAL: SUPABASE_SERVICE_ROLE_KEY is missing in Edge Runtime");
+  }
+
   const service = createServiceClient();
 
   const productIds = parsed.items.map((item) => item.productId);
