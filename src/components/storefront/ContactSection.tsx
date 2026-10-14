@@ -28,8 +28,7 @@ export function ContactSection() {
       <div className="mx-auto max-w-7xl px-4 text-center sm:px-6 lg:px-8">
         <h2 className="font-heading text-3xl">Hablemos</h2>
         <p className="mx-auto mt-3 max-w-md text-sm text-cairo-bg/80">
-          ¿Tenés dudas sobre un producto, un pedido o simplemente querés
-          saludar? Estamos a un mensaje de distancia.
+          ¿Tenés alguna duda? Estamos a un mensaje de distancia.
         </p>
 
         <div className="mt-10 flex flex-col items-center justify-center gap-6 sm:flex-row sm:gap-10">

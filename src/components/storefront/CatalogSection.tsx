@@ -1,8 +1,9 @@
 import { ProductFilters } from "@/components/storefront/ProductFilters";
 import { ProductCard } from "@/components/storefront/ProductCard";
+import { SortSelect } from "@/components/storefront/SortSelect";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Pagination } from "@/components/ui/Pagination";
-import { getAvailableColors, getProducts } from "@/services/productService";
+import { getAvailableColors, getProducts, type ProductSortOption } from "@/services/productService";
 import { getCategories } from "@/services/categoryService";
 
 interface CatalogSectionProps {
@@ -13,7 +14,8 @@ interface CatalogSectionProps {
   maxPrice?: number;
   searchQuery?: string;
   page?: number;
-  /** Shows the search bar and pagination controls. Off by default so the Home page's "Novedades" preview stays a simple, unpaginated grid. */
+  sort?: ProductSortOption;
+  /** Shows the search bar, sort dropdown, and pagination controls. Off by default so the Home page's "Novedades" preview stays a simple, unpaginated grid. */
   showSearchAndPagination?: boolean;
 }
 
@@ -31,16 +33,20 @@ export async function CatalogSection({
   maxPrice,
   searchQuery,
   page,
+  sort,
   showSearchAndPagination = false,
 }: CatalogSectionProps) {
   const [{ data: products, totalPages }, categories, availableColors] = await Promise.all([
-    getProducts({ categorySlug, colors, minPrice, maxPrice, searchQuery, page }),
+    getProducts({ categorySlug, colors, minPrice, maxPrice, searchQuery, page, sort }),
     getCategories(),
     getAvailableColors(),
   ]);
 
   return (
-    <section className="py-16">
+    // `overflow-x-hidden` is a preventive guard: it contains any rogue child (e.g. a
+    // filter control that briefly grows past its track) instead of letting it force a
+    // horizontal scrollbar on the whole page body.
+    <section className="overflow-x-hidden py-16">
       <h2 className="px-4 text-center font-heading text-3xl text-cairo-text sm:px-6 lg:px-8">
         {title}
       </h2>
@@ -55,10 +61,20 @@ export async function CatalogSection({
       </div>
 
       <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+        {showSearchAndPagination && (
+          <div className="mb-6 flex justify-end">
+            <SortSelect />
+          </div>
+        )}
+
         {products.length > 0 ? (
           <div className="grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">
-            {products.map((product) => (
-              <ProductCard key={product.id} product={product} />
+            {products.map((product, index) => (
+              // Only the very first card is above-the-fold on both the Home
+              // page (right under the Hero) and `/catalogo` — it's the
+              // page's actual LCP element, since `HeroSlider` renders no
+              // `<Image>` of its own.
+              <ProductCard key={product.id} product={product} priority={index === 0} />
             ))}
           </div>
         ) : (

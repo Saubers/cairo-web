@@ -42,7 +42,7 @@ export function NavDrawer({ isOpen, onClose, links }: NavDrawerProps) {
             role="dialog"
             aria-modal="true"
             aria-label="Main navigation"
-            className="fixed left-0 top-0 z-[70] flex h-full w-full max-w-sm flex-col bg-cairo-bg shadow-2xl"
+            className="fixed left-0 top-0 z-[70] flex h-full w-[80%] max-w-sm flex-col bg-cairo-bg shadow-2xl"
             initial={{ x: "-100%" }}
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}

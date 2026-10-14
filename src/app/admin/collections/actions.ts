@@ -76,6 +76,7 @@ export async function createCollection(input: CollectionFormInput): Promise<Acti
   revalidatePath("/admin/collections");
   revalidatePath("/admin/products");
   revalidatePath("/colecciones");
+  revalidatePath("/colecciones/[slug]", "page");
   return {};
 }
 
@@ -132,6 +133,7 @@ export async function updateCollection(
   revalidatePath("/admin/collections");
   revalidatePath("/admin/products");
   revalidatePath("/colecciones");
+  revalidatePath("/colecciones/[slug]", "page");
   return {};
 }
 
@@ -145,5 +147,8 @@ export async function deleteCollection(id: string): Promise<ActionResult> {
   }
 
   revalidatePath("/admin/collections");
+  revalidatePath("/admin/products");
+  revalidatePath("/colecciones");
+  revalidatePath("/colecciones/[slug]", "page");
   return {};
 }

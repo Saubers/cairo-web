@@ -1,6 +1,5 @@
 import { HeroSlider } from "@/components/storefront/HeroSlider";
 import { CatalogSection } from "@/components/storefront/CatalogSection";
-import { ContactSection } from "@/components/storefront/ContactSection";
 import { readArrayParam, readNumberParam, readStringParam } from "@/lib/searchParams";
 
 // Server Component: the Navbar is rendered globally in the root layout.
@@ -26,8 +25,6 @@ export default async function Home(props: PageProps<"/">) {
         minPrice={minPrice}
         maxPrice={maxPrice}
       />
-
-      <ContactSection />
     </>
   );
 }

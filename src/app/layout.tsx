@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Toaster } from "sonner";
 import { bagdoll, headlineSans } from "@/lib/fonts";
+import { AnnouncementBar } from "@/components/layout/AnnouncementBar";
 import { Navbar } from "@/components/layout/Navbar";
+import { Footer } from "@/components/layout/Footer";
 import "./globals.css";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
@@ -12,7 +14,7 @@ export const metadata: Metadata = {
   // against (including the ones set per-page via `generateMetadata`).
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "Cairo | Accesorios",
+    default: "Cairo | Accesorios Premium",
     // Lets page-level metadata set only the product/page name, e.g.
     // "Cartera Luna | Cairo", via `title: { template }`.
     template: "%s | Cairo",
@@ -20,7 +22,7 @@ export const metadata: Metadata = {
   description: SITE_DESCRIPTION,
   openGraph: {
     siteName: "Cairo",
-    title: "Cairo | Accesorios",
+    title: "Cairo | Accesorios Premium",
     description: SITE_DESCRIPTION,
     url: SITE_URL,
     locale: "es_AR",
@@ -30,13 +32,18 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html
-      lang="es-AR"
-      className={`${bagdoll.variable} ${headlineSans.variable} h-full antialiased`}
-    >
-      <body className="flex min-h-full flex-col overflow-x-hidden overscroll-none bg-cairo-bg font-sans text-cairo-text">
+    <html lang="es-AR" className={`${bagdoll.variable} ${headlineSans.variable} antialiased`}>
+      {/* Keep this class list minimal and scroll-safe: no `overflow-*`/`h-screen`/`overscroll-*`
+          utility here has ever been required for the layout to work, and any of them risks
+          accidentally disabling the page's native wheel/touch scroll.
+          Scroll anchoring and smooth-scroll are disabled globally in globals.css (on `html` AND
+          `body` — `html` is this app's real scrolling box, so a `body`-only rule isn't enough),
+          not here, to keep a single source of truth. */}
+      <body className="flex min-h-screen flex-col bg-cairo-bg font-sans text-cairo-text">
+        <AnnouncementBar />
         <Navbar />
         <main className="flex w-full flex-1 flex-col">{children}</main>
+        <Footer />
         {/* Floating feedback for every mutation (login, logout, admin CRUD, order
             status updates) — replaces native alerts and static inline banners. */}
         <Toaster

@@ -67,6 +67,9 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
         params.append("color", selectedColor);
       }
 
+      // A new category/color selection restarts pagination from the first page.
+      params.delete("page");
+
       const query = params.toString();
       const nextUrl = query ? `${pathname}?${query}` : pathname;
 
@@ -113,6 +116,9 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
       params.delete("maxPrice");
     }
 
+    // A new price range restarts pagination from the first page.
+    params.delete("page");
+
     const query = params.toString();
     router.push(query ? `${pathname}?${query}` : pathname, { scroll: false });
   }
@@ -132,13 +138,16 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
   return (
     <div className="sticky top-14 z-10 border-b border-cairo-text/10 bg-cairo-bg/95 backdrop-blur">
       <div className="mx-auto max-w-7xl space-y-4 px-4 py-4 sm:px-6 lg:px-8">
-        {/* Category tabs */}
-        <div className="flex w-max gap-8 overflow-x-auto sm:w-full sm:justify-center">
+        {/* Category tabs. `w-full` (not `w-max`) keeps this container's own box from
+            growing past its parent on mobile — `w-max` sized it to its content instead,
+            which pushed the whole row past the viewport edge instead of scrolling inside
+            itself. `snap-x` + `scrollbar-hide` make the horizontal swipe feel native. */}
+        <div className="flex w-full gap-2 overflow-x-auto pb-2 snap-x scrollbar-hide sm:justify-center">
           <button
             type="button"
             aria-pressed={categorySlug === null}
             onClick={() => handleSelectCategory(null)}
-            className={`whitespace-nowrap border-b-2 pb-1 text-sm font-medium transition-colors ${
+            className={`shrink-0 snap-start whitespace-nowrap border-b-2 pb-1 text-sm font-medium transition-colors ${
               categorySlug === null
                 ? "border-cairo-primary text-cairo-primary"
                 : "border-transparent text-cairo-text/60 hover:text-cairo-text"
@@ -156,7 +165,7 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
                 type="button"
                 aria-pressed={isActive}
                 onClick={() => handleSelectCategory(category.slug)}
-                className={`whitespace-nowrap border-b-2 pb-1 text-sm font-medium transition-colors ${
+                className={`shrink-0 snap-start whitespace-nowrap border-b-2 pb-1 text-sm font-medium transition-colors ${
                   isActive
                     ? "border-cairo-primary text-cairo-primary"
                     : "border-transparent text-cairo-text/60 hover:text-cairo-text"
@@ -168,8 +177,10 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
           })}
         </div>
 
-        {/* Color + price range filters */}
-        <div className="flex flex-wrap items-end gap-6">
+        {/* Color + price range filters. `flex-wrap` lets "Color", "Precio", and "Limpiar
+            filtros" flow onto their own lines instead of forcing a single row that pushes
+            past the viewport on narrow screens. */}
+        <div className="flex w-full flex-wrap items-center gap-4">
           {colors.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <span className="text-xs font-medium uppercase tracking-wide text-cairo-text/50">
@@ -197,7 +208,10 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          {/* Wrapped in its own responsive container: wraps onto two lines on narrow
+              screens (`flex-wrap`) instead of squeezing "Mín"/"Máx"/"Aplicar" into one
+              row that overflows, but stays a single row from `sm` up. */}
+          <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto sm:flex-nowrap">
             <span className="text-xs font-medium uppercase tracking-wide text-cairo-text/50">
               Precio
             </span>
@@ -208,7 +222,7 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
               placeholder="Mín"
               value={minPrice}
               onChange={(event) => setMinPrice(event.target.value)}
-              className="w-20 rounded-md border border-cairo-text/20 bg-cairo-bg px-2 py-1 text-xs text-cairo-text outline-none focus:border-cairo-primary"
+              className="w-20 max-w-full rounded-md border border-cairo-text/20 bg-cairo-bg px-2 py-1 text-xs text-cairo-text outline-none focus:border-cairo-primary"
             />
             <span className="text-cairo-text/40">–</span>
             <input
@@ -218,7 +232,7 @@ export function ProductFilters({ categories, colors }: ProductFiltersProps) {
               placeholder="Máx"
               value={maxPrice}
               onChange={(event) => setMaxPrice(event.target.value)}
-              className="w-20 rounded-md border border-cairo-text/20 bg-cairo-bg px-2 py-1 text-xs text-cairo-text outline-none focus:border-cairo-primary"
+              className="w-20 max-w-full rounded-md border border-cairo-text/20 bg-cairo-bg px-2 py-1 text-xs text-cairo-text outline-none focus:border-cairo-primary"
             />
             <button
               type="button"

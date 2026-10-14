@@ -6,6 +6,8 @@ import { calculateDiscountedPrice } from "@/lib/utils";
 
 interface ProductCardProps {
   product: Product;
+  /** Marks this card's image as the page's LCP element (first above-the-fold card only). */
+  priority?: boolean;
 }
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
@@ -20,7 +22,7 @@ const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
  * Components. Clicking the image or title navigates to the product detail
  * page; clicking the carousel arrows or the "add to cart" button does not.
  */
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product, priority = false }: ProductCardProps) {
   const href = `/producto/${product.id}`;
   const hasDiscount = product.isDiscountActive && !!product.discountPercentage;
   const discountedPrice = calculateDiscountedPrice(
@@ -33,7 +35,7 @@ export function ProductCard({ product }: ProductCardProps) {
     <article className="group transition-all duration-200 ease-in-out hover:-translate-y-1">
       <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-cairo-accent-yellow/40">
         <Link href={href} aria-label={product.name} className="absolute inset-0 z-0 block">
-          <ProductImageCarousel images={product.imageUrls} alt={product.name} />
+          <ProductImageCarousel images={product.imageUrls} alt={product.name} priority={priority} />
         </Link>
 
         {hasDiscount && (

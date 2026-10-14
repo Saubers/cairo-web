@@ -45,8 +45,14 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
   }
 
   return (
-    <div className="relative">
-      <div ref={emblaRef} className="aspect-square w-full overflow-hidden rounded-lg bg-cairo-accent-yellow/40">
+    <div className="relative w-full min-w-0">
+      {/* Strict `aspect-square` + `max-w-full` instead of a fixed `h-[...]` — the box is always
+          exactly as tall as it is wide, so it scales down cleanly on any mobile viewport instead
+          of blowing out to a fixed pixel height. */}
+      <div
+        ref={emblaRef}
+        className="relative aspect-square w-full max-w-full overflow-hidden rounded-lg bg-cairo-accent-yellow/40"
+      >
         <div className="flex h-full">
           {images.map((src, index) => (
             <div key={src} className="relative h-full min-w-0 flex-[0_0_100%]">
@@ -54,7 +60,7 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
                 src={src}
                 alt={`${alt} ${index + 1}`}
                 fill
-                sizes="(min-width: 1024px) 50vw, 100vw"
+                sizes="(max-width: 768px) 100vw, 50vw"
                 priority={index === 0}
                 className="object-cover"
               />
@@ -82,17 +88,30 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
             <ChevronRight className="h-5 w-5" />
           </button>
 
-          <div className="mt-3 flex justify-center gap-2">
+          {/* Thumbnail strip: horizontally scrollable with snap-to-start, so it works as a
+              touch-friendly swipeable pagination on mobile instead of just a static dot row.
+              `w-full` caps the strip at the gallery's own width (it never forces the grid item
+              wider), and every thumbnail below is `shrink-0` with a fixed size — without that,
+              a flex row this long would compress/stretch each thumbnail instead of scrolling. */}
+          <div className="mt-3 flex w-full gap-4 overflow-x-auto scrollbar-hide snap-x snap-mandatory pb-2">
             {images.map((src, index) => (
               <button
                 key={src}
                 type="button"
                 aria-label={`Go to image ${index + 1}`}
                 onClick={() => scrollTo(index)}
-                className={`h-2 rounded-full transition-all ${
-                  index === selectedIndex ? "w-6 bg-cairo-primary" : "w-2 bg-cairo-text/30"
+                className={`relative h-20 w-20 shrink-0 snap-start overflow-hidden rounded-md border-2 transition-colors sm:h-24 sm:w-24 ${
+                  index === selectedIndex ? "border-cairo-primary" : "border-transparent"
                 }`}
-              />
+              >
+                <Image
+                  src={src}
+                  alt={`${alt} thumbnail ${index + 1}`}
+                  fill
+                  sizes="96px"
+                  className="object-cover"
+                />
+              </button>
             ))}
           </div>
         </>

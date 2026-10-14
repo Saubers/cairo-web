@@ -1,6 +1,11 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
+import { endOfDayIso } from "@/lib/utils";
 import type { Order, OrderItem } from "@/types";
+
+/** Matches a canonical UUID (any version/variant), case-insensitively. */
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** An `OrderItem` augmented with its product's first thumbnail, when resolvable. */
 export interface OrderItemWithImage extends OrderItem {
@@ -180,7 +185,7 @@ export async function getOrderWithItems(
  * normal, expected case — callers render a placeholder instead of erroring.
  */
 async function attachItemImages(
-  supabase: Awaited<ReturnType<typeof createClient>>,
+  supabase: SupabaseClient,
   items: OrderItem[],
 ): Promise<OrderItemWithImage[]> {
   const productIds = [...new Set(items.map((item) => item.productId).filter(Boolean))] as string[];
@@ -239,21 +244,55 @@ async function resolveCustomerEmails(userIds: string[]): Promise<Map<string, str
 }
 
 /**
- * Fetches the most recent orders for the admin "Pedidos" list, newest first.
- *
- * Capped at `limit` (default 50) so the view stays fast regardless of how
- * many orders the store accumulates over time — admins needing older
- * history can be given a dedicated search/pagination UI later.
+ * Default cap for the admin "Pedidos" list and its CSV export, so both stay
+ * in sync without duplicating the number in every caller.
  */
-export async function getOrdersForAdmin(limit = 50): Promise<AdminOrderListItem[]> {
+export const ADMIN_ORDERS_LIMIT = 50;
+
+/**
+ * Cap used by the orders CSV export instead of `ADMIN_ORDERS_LIMIT` — the
+ * list view only ever shows the most recent orders, but the export should
+ * capture every order within the selected date range, not just the first
+ * 50. Still bounded so a single export can't run away on a huge table.
+ */
+export const ADMIN_ORDERS_EXPORT_LIMIT = 10_000;
+
+/** Filters accepted by `getOrdersForAdmin`, driven by the orders list's URL search params. */
+export interface AdminOrderFilters {
+  /** Inclusive lower bound (`YYYY-MM-DD`) on `created_at`. */
+  startDate?: string;
+  /** Inclusive upper bound (`YYYY-MM-DD`) on `created_at`. */
+  endDate?: string;
+  limit?: number;
+}
+
+/**
+ * Fetches the most recent orders for the admin "Pedidos" list, newest first,
+ * optionally scoped to a `created_at` date range.
+ *
+ * Capped at `filters.limit` (default `ADMIN_ORDERS_LIMIT`) so the view stays
+ * fast regardless of how many orders the store accumulates over time —
+ * admins needing older history can narrow the date range or be given a
+ * dedicated pagination UI later.
+ */
+export async function getOrdersForAdmin(filters: AdminOrderFilters = {}): Promise<AdminOrderListItem[]> {
   const supabase = await createClient();
 
-  const { data, error } = await supabase
+  let query = supabase
     .from("orders")
     .select(ORDER_COLUMNS)
     .order("created_at", { ascending: false })
-    .limit(limit)
-    .returns<OrderRow[]>();
+    .limit(filters.limit ?? ADMIN_ORDERS_LIMIT);
+
+  if (filters.startDate) {
+    query = query.gte("created_at", filters.startDate);
+  }
+
+  if (filters.endDate) {
+    query = query.lte("created_at", endOfDayIso(filters.endDate));
+  }
+
+  const { data, error } = await query.returns<OrderRow[]>();
 
   if (error) {
     throw new Error(`Failed to fetch orders for admin: ${error.message}`);
@@ -265,7 +304,10 @@ export async function getOrdersForAdmin(limit = 50): Promise<AdminOrderListItem[
 
   return orders.map((order) => ({
     ...order,
-    customerEmail: order.userId ? emailById.get(order.userId) ?? null : null,
+    // Registered buyers resolve via `auth.users`; guests never have a `userId`
+    // but always have `guestEmail` captured at checkout — fall back to it so
+    // the admin list never shows "-" for a perfectly valid guest contact.
+    customerEmail: (order.userId ? emailById.get(order.userId) : order.guestEmail) ?? null,
   }));
 }
 
@@ -307,4 +349,113 @@ export async function getOrderForAdmin(orderId: string): Promise<AdminOrderDetai
   const items = await attachItemImages(supabase, (itemRows ?? []).map(mapRowToOrderItem));
 
   return { order, items };
+}
+
+/**
+ * Fetches an order and its items by id alone, with no session/user check —
+ * intended ONLY for the post-checkout confirmation pages
+ * (`/carrito/exito`, `/carrito/pendiente`, `/carrito/error`), which Mercado
+ * Pago redirects to with `external_reference` (the order's own `id`)
+ * appended to the URL as a query param.
+ *
+ * This is safe without an auth check because the order `id` is a
+ * `gen_random_uuid()` primary key — effectively unguessable — so presenting
+ * it is treated as proof of access ("capability URL" pattern), the same
+ * trust model as a password-reset or email-confirmation link. It does NOT
+ * weaken RLS for any other read path: `getOrdersByUserId`/`getOrderWithItems`
+ * above remain the only user-scoped reads for the authenticated "Mis
+ * pedidos" section, and no RLS policy is changed to allow enumeration by
+ * email/DNI.
+ *
+ * Uses the service-role client because a guest order has no `user_id` for
+ * the `orders_select_own_or_admin` RLS policy to match against — the anon
+ * key cannot read it at all, by design.
+ */
+export async function getOrderConfirmation(
+  orderId: string,
+): Promise<{ order: Order; items: OrderItemWithImage[] } | null> {
+  if (!UUID_REGEX.test(orderId)) {
+    // Reject malformed input before it reaches Postgres — otherwise this
+    // would surface as an "invalid input syntax for type uuid" error
+    // instead of a clean "order not found" result.
+    return null;
+  }
+
+  const service = createServiceClient();
+
+  const { data: orderRow, error: orderError } = await service
+    .from("orders")
+    .select(ORDER_COLUMNS)
+    .eq("id", orderId)
+    .maybeSingle<OrderRow>();
+
+  if (orderError) {
+    throw new Error(`Failed to fetch order "${orderId}": ${orderError.message}`);
+  }
+
+  if (!orderRow) {
+    return null;
+  }
+
+  const { data: itemRows, error: itemsError } = await service
+    .from("order_items")
+    .select(ORDER_ITEM_COLUMNS)
+    .eq("order_id", orderId)
+    .returns<OrderItemRow[]>();
+
+  if (itemsError) {
+    throw new Error(`Failed to fetch items for order "${orderId}": ${itemsError.message}`);
+  }
+
+  const order = mapRowToOrder(orderRow);
+  const items = await attachItemImages(service, (itemRows ?? []).map(mapRowToOrderItem));
+
+  return { order, items };
+}
+
+/** Aggregate KPIs shown on the admin dashboard's stat cards. */
+export interface AdminOrderStats {
+  /** Sum of `total` across every order with `status = "paid"`. */
+  totalRevenue: number;
+  /** Count of orders created from the start of the current calendar month. */
+  ordersThisMonth: number;
+  /** Count of orders with `status = "paid"` — the denominator for the "Ticket promedio" KPI, computed in `admin/page.tsx`. */
+  paidOrdersCount: number;
+}
+
+/**
+ * Computes the KPI cards for the admin dashboard with two lightweight
+ * aggregate queries (no row bodies are transferred) instead of fetching
+ * every order and reducing in memory.
+ */
+export async function getOrderStatsForAdmin(): Promise<AdminOrderStats> {
+  const supabase = await createClient();
+
+  const startOfMonth = new Date();
+  startOfMonth.setDate(1);
+  startOfMonth.setHours(0, 0, 0, 0);
+
+  const [paidResult, monthResult] = await Promise.all([
+    supabase.from("orders").select("total").eq("status", "paid").returns<{ total: number }[]>(),
+    supabase
+      .from("orders")
+      .select("id", { count: "exact", head: true })
+      .gte("created_at", startOfMonth.toISOString()),
+  ]);
+
+  if (paidResult.error) {
+    throw new Error(`Failed to fetch paid orders for admin stats: ${paidResult.error.message}`);
+  }
+  if (monthResult.error) {
+    throw new Error(`Failed to count monthly orders for admin stats: ${monthResult.error.message}`);
+  }
+
+  const paidOrders = paidResult.data ?? [];
+  const totalRevenue = paidOrders.reduce((sum, order) => sum + order.total, 0);
+
+  return {
+    totalRevenue,
+    ordersThisMonth: monthResult.count ?? 0,
+    paidOrdersCount: paidOrders.length,
+  };
 }

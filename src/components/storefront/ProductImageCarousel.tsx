@@ -8,6 +8,8 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 interface ProductImageCarouselProps {
   images: string[];
   alt: string;
+  /** Marks this card's first slide as the LCP image (set only on the first above-the-fold card). */
+  priority?: boolean;
 }
 
 /**
@@ -19,7 +21,7 @@ interface ProductImageCarouselProps {
  * handled by Embla regardless of visibility. Extracted as its own Client
  * Component so `ProductCard` itself can stay a Server Component.
  */
-export function ProductImageCarousel({ images, alt }: ProductImageCarouselProps) {
+export function ProductImageCarousel({ images, alt, priority = false }: ProductImageCarouselProps) {
   const [emblaRef, emblaApi] = useEmblaCarousel({ loop: false });
   const [canScrollPrev, setCanScrollPrev] = useState(false);
   const [canScrollNext, setCanScrollNext] = useState(false);
@@ -75,6 +77,7 @@ export function ProductImageCarousel({ images, alt }: ProductImageCarouselProps)
                 alt={`${alt} ${index + 1}`}
                 fill
                 sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
+                priority={priority && index === 0}
                 className="object-cover transition-transform duration-500 group-hover:scale-105"
               />
             </div>

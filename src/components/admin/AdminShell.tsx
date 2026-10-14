@@ -19,7 +19,11 @@ export function AdminShell({ children }: AdminShellProps) {
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   return (
-    <div className="flex min-h-screen bg-[#f7f6f4]">
+    // `min-w-0` overrides this flex item's default `min-width: auto` — without it, the
+    // intrinsic (min-content) width of deeply nested content (e.g. the tables' `min-w-[...]`)
+    // bubbles up through every flex ancestor and prevents this row from ever shrinking
+    // below that width, forcing horizontal scroll on the whole page.
+    <div className="flex min-h-screen min-w-0 bg-[#f7f6f4]">
       {/* Desktop sidebar: fixed, always visible from lg breakpoint up. */}
       <aside className="hidden lg:fixed lg:inset-y-0 lg:flex lg:w-64 lg:flex-col lg:border-r lg:border-cairo-text/10 lg:bg-cairo-bg">
         <AdminSidebar />
@@ -64,7 +68,9 @@ export function AdminShell({ children }: AdminShellProps) {
         )}
       </AnimatePresence>
 
-      <div className="flex min-h-screen flex-1 flex-col lg:pl-64">
+      {/* Same fix as above: this column is a flex item of the row above it, so it needs its
+          own explicit `min-w-0` — the override does not cascade to nested flex containers. */}
+      <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pl-64">
         {/* Mobile topbar: hamburger trigger, hidden on desktop. */}
         <header className="sticky top-0 z-30 flex items-center gap-4 border-b border-cairo-text/10 bg-cairo-bg px-4 py-3 lg:hidden">
           <button
@@ -80,7 +86,14 @@ export function AdminShell({ children }: AdminShellProps) {
           </span>
         </header>
 
-        <main className="flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+        {/* `overflow-x-hidden` + `max-w-[100vw]` are a preventive guard on the content area
+            only (never the sidebar) — the absolute `max-w` is a hard ceiling that contains
+            any rogue child even if a future change removes the flex `min-w-0` chain above.
+            `min-w-0` lets this flex item itself shrink below its content's intrinsic width
+            instead of being held open by it. */}
+        <main className="min-w-0 max-w-[100vw] flex-1 overflow-x-hidden p-4 sm:p-6 lg:p-8">
+          {children}
+        </main>
       </div>
     </div>
   );

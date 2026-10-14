@@ -7,6 +7,7 @@ import {
   Layers,
   LayoutDashboard,
   Package,
+  Settings,
   ShoppingCart,
   Tags,
   type LucideIcon,
@@ -24,6 +25,7 @@ const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { href: "/admin/categories", label: "Categorías", icon: Tags },
   { href: "/admin/collections", label: "Colecciones", icon: Layers },
   { href: "/admin/orders", label: "Pedidos", icon: ShoppingCart },
+  { href: "/admin/configuracion", label: "Configuración", icon: Settings },
 ];
 
 interface AdminSidebarContentProps {
@@ -42,7 +44,11 @@ function AdminSidebarContent({ onNavigate }: AdminSidebarContentProps) {
         </span>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-1 px-3">
+      {/* `pt-6` gives the first link ("Dashboard") breathing room below the
+          brand mark instead of butting up against it; `overflow-y-auto`
+          keeps that padding from breaking the scroll if the nav list ever
+          grows taller than the sidebar's available height. */}
+      <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-3 pt-6">
         {ADMIN_NAV_ITEMS.map(({ href, label, icon: Icon }) => {
           // Only the Dashboard link should match exactly; the rest match any sub-route.
           const isActive = href === "/admin" ? pathname === href : pathname.startsWith(href);

@@ -18,3 +18,13 @@ export function calculateDiscountedPrice(
   const discounted = price * (1 - discountPercentage / 100);
   return Math.round(discounted);
 }
+
+/**
+ * Appends the latest possible time to a `YYYY-MM-DD` date string (as
+ * produced by a native `<input type="date">`), so a
+ * `.lte("created_at", endOfDayIso(endDate))` Supabase filter includes every
+ * row created on `endDate` instead of cutting off at midnight.
+ */
+export function endOfDayIso(date: string): string {
+  return `${date}T23:59:59.999`;
+}

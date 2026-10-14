@@ -3,6 +3,7 @@ import { MercadoPagoConfig, Preference } from "mercadopago";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { calculateDiscountedPrice } from "@/lib/utils";
+import { calculateShipping, FREE_SHIPPING_THRESHOLD, FLAT_SHIPPING_RATE } from "@/lib/shipping";
 import { checkoutSchema, type CheckoutFormValues } from "@/lib/validation/checkoutSchema";
 
 const mercadoPagoConfig = new MercadoPagoConfig({
@@ -27,6 +28,11 @@ interface ProductPriceRow {
   is_active: boolean;
   discount_percentage: number | null;
   is_discount_active: boolean;
+}
+
+interface StoreSettingsRow {
+  free_shipping_threshold: number;
+  flat_shipping_rate: number;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -113,15 +119,28 @@ export async function POST(request: Request) {
 
   const productIds = parsed.items.map((item) => item.productId);
 
-  const { data: products, error: productsError } = await service
-    .from("products")
-    .select("id, name, price, stock, is_active, discount_percentage, is_discount_active")
-    .in("id", productIds)
-    .returns<ProductPriceRow[]>();
+  const [{ data: products, error: productsError }, { data: storeSettings }] = await Promise.all([
+    service
+      .from("products")
+      .select("id, name, price, stock, is_active, discount_percentage, is_discount_active")
+      .in("id", productIds)
+      .returns<ProductPriceRow[]>(),
+    // [CRITICAL] Shipping config is read fresh from `store_settings` here —
+    // never trusted from the client — so an admin's edit on
+    // `/admin/configuracion` takes effect on the very next checkout without
+    // a deploy. Falls back to the hardcoded constants only if the row is
+    // somehow missing.
+    service.from("store_settings").select("free_shipping_threshold, flat_shipping_rate").limit(1).maybeSingle<StoreSettingsRow>(),
+  ]);
 
   if (productsError) {
     return NextResponse.json({ error: "Failed to validate cart items." }, { status: 500 });
   }
+
+  const freeShippingThreshold = storeSettings
+    ? Number(storeSettings.free_shipping_threshold)
+    : FREE_SHIPPING_THRESHOLD;
+  const flatShippingRate = storeSettings ? Number(storeSettings.flat_shipping_rate) : FLAT_SHIPPING_RATE;
 
   const productById = new Map((products ?? []).map((product) => [product.id, product]));
 
@@ -166,7 +185,12 @@ export async function POST(request: Request) {
     });
   }
 
-  const total = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+  // [CRITICAL] Shipping, like unit prices above, is never trusted from the
+  // client: it's derived here from the server-recomputed `subtotal` and the
+  // live `store_settings` row fetched above.
+  const subtotal = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
+  const shipping = calculateShipping(subtotal, freeShippingThreshold, flatShippingRate);
+  const total = shipping.total;
 
   const { contact } = parsed;
 
@@ -216,16 +240,34 @@ export async function POST(request: Request) {
   try {
     const preferenceResponse = await preference.create({
       body: {
-        items: orderItems.map((item) => ({
-          id: item.product_id,
-          title: item.product_name,
-          quantity: item.quantity,
-          // Defensive coercion: guarantees a numeric `unit_price` even if the
-          // value were ever to flow through as a string, since Mercado Pago
-          // rejects the preference payload when it isn't a number.
-          unit_price: Number(item.unit_price),
-          currency_id: "ARS",
-        })),
+        items: [
+          ...orderItems.map((item) => ({
+            id: item.product_id,
+            title: item.product_name,
+            quantity: item.quantity,
+            // Defensive coercion: guarantees a numeric `unit_price` even if the
+            // value were ever to flow through as a string, since Mercado Pago
+            // rejects the preference payload when it isn't a number.
+            unit_price: Number(item.unit_price),
+            currency_id: "ARS",
+          })),
+          // Flat-rate shipping is charged as its own line item rather than via
+          // `shipments.cost`, since it's broadly supported by Checkout Pro and
+          // keeps the total Mercado Pago charges in sync with `orders.total`
+          // without needing a separate shipments object. Omitted entirely once
+          // the subtotal clears the free-shipping threshold.
+          ...(shipping.isFree
+            ? []
+            : [
+                {
+                  id: "shipping",
+                  title: "Envío a Domicilio",
+                  quantity: 1,
+                  unit_price: shipping.cost,
+                  currency_id: "ARS",
+                },
+              ]),
+        ],
         // Pre-filling the payer's DNI speeds up the Checkout Pro flow and is
         // required by Mercado Pago to properly identify the payer in AR.
         payer: {

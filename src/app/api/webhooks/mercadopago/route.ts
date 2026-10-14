@@ -8,6 +8,8 @@ interface OrderRow {
   user_id: string | null;
   status: string;
   total: number;
+  guest_email: string | null;
+  guest_name: string | null;
 }
 
 interface OrderItemRow {
@@ -17,24 +19,84 @@ interface OrderItemRow {
   subtotal: number;
 }
 
+interface ProfileRow {
+  full_name: string | null;
+}
+
+/** The resolved recipient for an order's confirmation email, plus which path produced it (for logging). */
+interface OrderRecipient {
+  email: string;
+  name: string | null;
+  source: "registered" | "guest";
+}
+
 const mercadoPagoConfig = new MercadoPagoConfig({
   accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN!,
 });
 
 /**
- * Looks up the paying customer's email and the order's line items, then
- * sends the confirmation email. Guest orders (no `user_id`) have no
- * resolvable email anywhere in the schema, so they are silently skipped.
+ * Resolves who should receive the order confirmation email, covering both
+ * checkout flows:
+ * - Registered customer (`user_id` set): email comes from `auth.users`
+ *   (via the service-role admin API — `profiles` has no email column), and
+ *   the display name from `profiles.full_name`.
+ * - Guest checkout (`user_id` is null): uses the `guest_email`/`guest_name`
+ *   columns captured directly on `orders` at checkout time — there is no
+ *   account to join against.
+ *
+ * Returns `null` only in the should-never-happen case where neither path
+ * yields an email, so the caller can skip sending without throwing.
+ */
+async function resolveOrderRecipient(
+  service: ReturnType<typeof createServiceClient>,
+  order: OrderRow,
+): Promise<OrderRecipient | null> {
+  if (order.user_id) {
+    const { data: userResult } = await service.auth.admin.getUserById(order.user_id);
+    const email = userResult?.user?.email;
+    if (!email) return null;
+
+    const { data: profileRow } = await service
+      .from("profiles")
+      .select("full_name")
+      .eq("id", order.user_id)
+      .maybeSingle<ProfileRow>();
+
+    return { email, name: profileRow?.full_name ?? null, source: "registered" };
+  }
+
+  if (order.guest_email) {
+    return { email: order.guest_email, name: order.guest_name, source: "guest" };
+  }
+
+  return null;
+}
+
+/**
+ * Looks up the order's recipient and line items, then sends the
+ * confirmation email. Works uniformly for registered customers and guest
+ * checkouts — see `resolveOrderRecipient`.
  */
 async function notifyOrderPaid(
   service: ReturnType<typeof createServiceClient>,
   order: OrderRow,
 ): Promise<void> {
-  if (!order.user_id) return;
+  const recipient = await resolveOrderRecipient(service, order);
 
-  const { data: userResult } = await service.auth.admin.getUserById(order.user_id);
-  const email = userResult?.user?.email;
-  if (!email) return;
+  if (!recipient) {
+    // Extremely unlikely: an order with neither a linked account nor
+    // guest contact info. Log for investigation and return normally —
+    // this must never throw, so the webhook still responds with HTTP 200
+    // and Mercado Pago does not keep retrying an already-reconciled order.
+    console.error(
+      `[mercadopago-webhook] Order ${order.id} has no resolvable recipient (no user_id and no guest_email) — skipping confirmation email.`,
+    );
+    return;
+  }
+
+  console.log(
+    `[mercadopago-webhook] Sending order confirmation email for order ${order.id} to ${recipient.source === "registered" ? "a registered user" : "a guest"} (${recipient.email}).`,
+  );
 
   const { data: itemRows } = await service
     .from("order_items")
@@ -42,7 +104,7 @@ async function notifyOrderPaid(
     .eq("order_id", order.id)
     .returns<OrderItemRow[]>();
 
-  await sendOrderConfirmationEmail(email, {
+  await sendOrderConfirmationEmail(recipient.email, recipient.name, {
     orderId: order.id,
     total: order.total,
     items: (itemRows ?? []).map((row) => ({
@@ -99,7 +161,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const { data: existingOrder } = await service
       .from("orders")
-      .select("id, user_id, status, total")
+      .select("id, user_id, status, total, guest_email, guest_name")
       .eq("id", orderId)
       .maybeSingle<OrderRow>();
 

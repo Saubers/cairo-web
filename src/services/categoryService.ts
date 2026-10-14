@@ -37,3 +37,26 @@ export async function getCategories(): Promise<Category[]> {
 
   return (data ?? []).map(mapRowToCategory);
 }
+
+/**
+ * Fetches a single category by id, for the product detail page's
+ * breadcrumb trail. Returns `null` when no row matches (or when `id` is
+ * `null`, i.e. the product has no category).
+ */
+export async function getCategoryById(id: string | null): Promise<Category | null> {
+  if (!id) return null;
+
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("categories")
+    .select("id, name, slug, created_at")
+    .eq("id", id)
+    .maybeSingle<CategoryRow>();
+
+  if (error) {
+    throw new Error(`Failed to fetch category "${id}": ${error.message}`);
+  }
+
+  return data ? mapRowToCategory(data) : null;
+}

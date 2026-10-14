@@ -1,5 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
+import { endOfDayIso } from "@/lib/utils";
 import type { Product } from "@/types";
+
+/** Sort options for the public catalog grid, driven by the `?sort=` URL search param. */
+export type ProductSortOption = "newest" | "price_asc" | "price_desc";
 
 export interface ProductFilters {
   categorySlug?: string;
@@ -13,12 +17,30 @@ export interface ProductFilters {
   page?: number;
   /** Scopes results to a single collection (e.g. for `/colecciones/[slug]`). */
   collectionId?: string;
+  /** Defaults to `"newest"` (`created_at` descending). */
+  sort?: ProductSortOption;
 }
 
 export interface AdminProductFilters {
   searchQuery?: string;
   /** 1-based page number. Defaults to 1. */
   page?: number;
+  /** Inclusive lower bound (`YYYY-MM-DD`) on `created_at`. */
+  startDate?: string;
+  /** Inclusive upper bound (`YYYY-MM-DD`) on `created_at`. */
+  endDate?: string;
+}
+
+/** Maps a `ProductSortOption` to the Supabase `.order()` call it represents. */
+function resolveSortOrder(sort?: ProductSortOption): { column: "created_at" | "price"; ascending: boolean } {
+  switch (sort) {
+    case "price_asc":
+      return { column: "price", ascending: true };
+    case "price_desc":
+      return { column: "price", ascending: false };
+    default:
+      return { column: "created_at", ascending: false };
+  }
 }
 
 /** A page of products, plus enough information to render pagination controls. */
@@ -125,12 +147,13 @@ export async function getProducts(filters: ProductFilters = {}): Promise<Paginat
   }
 
   const [from, to] = toRange(filters.page ?? 1, PUBLIC_PAGE_SIZE);
+  const sortOrder = resolveSortOrder(filters.sort);
 
   let query = supabase
     .from("products")
     .select(PRODUCT_COLUMNS, { count: "exact" })
     .eq("is_active", true)
-    .order("created_at", { ascending: false })
+    .order(sortOrder.column, { ascending: sortOrder.ascending })
     .range(from, to);
 
   if (categoryId) {
@@ -157,19 +180,45 @@ export async function getProducts(filters: ProductFilters = {}): Promise<Paginat
     query = query.ilike("name", `%${filters.searchQuery}%`);
   }
 
-  const { data, error, count } = await query.returns<ProductRow[]>();
+  // Wrapped in try/catch because a stale `page` combined with a filter that
+  // now matches fewer rows pushes `.range(from, to)` past the end of the
+  // result set, which Supabase/PostgREST rejects with HTTP 416 ("Requested
+  // range not satisfiable") — either as a returned `error` or a thrown
+  // exception, depending on the client/transport. Both cases are treated as
+  // "no results for this page" instead of crashing the whole SSR render.
+  try {
+    const { data, error, count } = await query.returns<ProductRow[]>();
 
-  if (error) {
-    throw new Error(`Failed to fetch products: ${error.message}`);
+    if (error) {
+      if (isRangeNotSatisfiableError(error.code, error.message)) {
+        return { data: [], totalCount: 0, totalPages: 1 };
+      }
+
+      throw new Error(`Failed to fetch products: ${error.message}`);
+    }
+
+    const totalCount = count ?? 0;
+
+    return {
+      data: (data ?? []).map(mapRowToProduct),
+      totalCount,
+      totalPages: Math.max(1, Math.ceil(totalCount / PUBLIC_PAGE_SIZE)),
+    };
+  } catch (caughtError) {
+    if (caughtError instanceof Error && isRangeNotSatisfiableError(undefined, caughtError.message)) {
+      return { data: [], totalCount: 0, totalPages: 1 };
+    }
+
+    throw caughtError;
   }
+}
 
-  const totalCount = count ?? 0;
+/** PostgREST's error code for "Requested range not satisfiable" (HTTP 416). */
+const RANGE_NOT_SATISFIABLE_CODE = "PGRST103";
 
-  return {
-    data: (data ?? []).map(mapRowToProduct),
-    totalCount,
-    totalPages: Math.max(1, Math.ceil(totalCount / PUBLIC_PAGE_SIZE)),
-  };
+/** True when a Supabase/PostgREST error represents an out-of-range `.range()` request. */
+function isRangeNotSatisfiableError(code: string | undefined, message: string): boolean {
+  return code === RANGE_NOT_SATISFIABLE_CODE || message.includes("Requested range not satisfiable");
 }
 
 /**
@@ -249,6 +298,14 @@ export async function getAllProductsForAdmin(
     query = query.ilike("name", `%${filters.searchQuery}%`);
   }
 
+  if (filters.startDate) {
+    query = query.gte("created_at", filters.startDate);
+  }
+
+  if (filters.endDate) {
+    query = query.lte("created_at", endOfDayIso(filters.endDate));
+  }
+
   const { data, error, count } = await query.returns<ProductRow[]>();
 
   if (error) {
@@ -262,6 +319,74 @@ export async function getAllProductsForAdmin(
     totalCount,
     totalPages: Math.max(1, Math.ceil(totalCount / ADMIN_PAGE_SIZE)),
   };
+}
+
+/**
+ * Fetches every product matching the admin list's current search/date
+ * filters, with no `.range()` pagination — backs the CSV export so it
+ * captures the full filtered set instead of only whichever page is
+ * currently rendered.
+ */
+export async function getAllProductsForExport(
+  filters: Omit<AdminProductFilters, "page"> = {},
+): Promise<Product[]> {
+  const supabase = await createClient();
+
+  let query = supabase.from("products").select(PRODUCT_COLUMNS).order("updated_at", { ascending: false });
+
+  if (filters.searchQuery) {
+    query = query.ilike("name", `%${filters.searchQuery}%`);
+  }
+
+  if (filters.startDate) {
+    query = query.gte("created_at", filters.startDate);
+  }
+
+  if (filters.endDate) {
+    query = query.lte("created_at", endOfDayIso(filters.endDate));
+  }
+
+  const { data, error } = await query.returns<ProductRow[]>();
+
+  if (error) {
+    throw new Error(`Failed to fetch products for export: ${error.message}`);
+  }
+
+  return (data ?? []).map(mapRowToProduct);
+}
+
+/** Number of cross-sell cards shown in the product detail page's "related products" section. */
+const RELATED_PRODUCTS_LIMIT = 4;
+
+/**
+ * Fetches a small set of active products sharing the same category as
+ * `categoryId`, excluding the product currently being viewed — powers the
+ * "También te podría gustar" cross-sell section on the product detail page.
+ * Returns an empty array when the product has no category to match against.
+ */
+export async function getRelatedProducts(
+  categoryId: string | null,
+  excludeProductId: string,
+): Promise<Product[]> {
+  if (!categoryId) return [];
+
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("products")
+    .select(PRODUCT_COLUMNS)
+    .eq("is_active", true)
+    .eq("category_id", categoryId)
+    .neq("id", excludeProductId)
+    .order("created_at", { ascending: false })
+    .limit(RELATED_PRODUCTS_LIMIT)
+    .returns<ProductRow[]>();
+
+  if (error) {
+    throw new Error(`Failed to fetch related products for category "${categoryId}": ${error.message}`);
+  }
+
+  return (data ?? []).map(mapRowToProduct);
 }
 
 /**

@@ -73,8 +73,8 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
 
   if (isEditing) {
     return (
-      <td colSpan={2} className="px-6 py-4">
-        <div className="flex items-center gap-2">
+      <td colSpan={2} className="py-4 pl-6 pr-8">
+        <div className="flex items-center gap-4">
           <input
             type="text"
             value={name}
@@ -87,7 +87,7 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
             onClick={handleSave}
             disabled={isSubmitting}
             aria-label="Guardar"
-            className="rounded-md bg-cairo-primary p-2 text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
+            className="rounded-md bg-cairo-primary p-2 text-cairo-bg transition-colors duration-200 hover:opacity-90 disabled:opacity-50"
           >
             {isSubmitting ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -103,7 +103,7 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
               setError(null);
             }}
             aria-label="Cancelar"
-            className="rounded-md border border-cairo-text/20 p-2 text-cairo-text/70 transition-all duration-200 ease-in-out hover:text-cairo-text"
+            className="rounded-md border border-cairo-text/20 p-2 text-cairo-text/70 transition-colors duration-200 hover:text-cairo-text"
           >
             <X className="h-4 w-4" />
           </button>
@@ -117,15 +117,18 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
   return (
     <>
       <td className="px-6 py-4 font-medium text-cairo-text">{category.name}</td>
-      <td className="px-6 py-4 text-cairo-text/70">
+      <td className="py-4 pl-6 pr-8 text-cairo-text/70">
         <div className="flex items-center justify-between gap-4">
-          <span>{category.slug}</span>
-          <div className="flex items-center gap-3">
+          <span className="truncate">{category.slug}</span>
+          {/* Fixed `h-10` keeps the row height stable as the edit/delete icons' hover states
+              toggle; no fixed width here so the box never overflows past the cell's `pr-8`
+              padding (the icon buttons' own size is all the width this box needs). */}
+          <div className="flex h-10 items-center gap-4">
             <button
               type="button"
               onClick={() => setIsEditing(true)}
               aria-label="Editar categoría"
-              className="rounded-md p-1.5 text-cairo-text/50 transition-all duration-200 ease-in-out hover:bg-cairo-accent-blue/30 hover:text-cairo-primary"
+              className="rounded-md p-2 text-cairo-text/50 transition-colors duration-200 hover:bg-cairo-accent-blue/30 hover:text-cairo-primary"
             >
               <Pencil className="h-4 w-4" />
             </button>
@@ -133,7 +136,7 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
               type="button"
               onClick={() => setIsModalOpen(true)}
               aria-label="Eliminar categoría"
-              className="rounded-md p-1.5 text-cairo-text/50 transition-all duration-200 ease-in-out hover:bg-red-50 hover:text-red-600"
+              className="rounded-md p-2 text-cairo-text/50 transition-colors duration-200 hover:bg-red-50 hover:text-red-600"
             >
               <Trash2 className="h-4 w-4" />
             </button>

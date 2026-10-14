@@ -33,7 +33,10 @@ function getResendClient(): Resend {
  * webfonts unreliably. `Helvetica Neue`/Arial is used as the closest
  * web-safe stand-in for Cairo's Headline Sans body typeface.
  */
-function renderOrderConfirmationHtml({ orderId, items, total }: OrderConfirmationDetails): string {
+function renderOrderConfirmationHtml(
+  recipientName: string | null,
+  { orderId, items, total }: OrderConfirmationDetails,
+): string {
   const itemRows = items
     .map(
       (item) => `
@@ -48,10 +51,17 @@ function renderOrderConfirmationHtml({ orderId, items, total }: OrderConfirmatio
     )
     .join("");
 
+  // `recipientName` comes from `profiles.full_name` (registered customers)
+  // or `orders.guest_name` (guest checkout) — both optional, so the
+  // greeting degrades gracefully to a generic one when absent.
+  const greeting = recipientName
+    ? `¡Gracias por tu compra, ${recipientName}!`
+    : "¡Gracias por tu compra!";
+
   return `
     <div style="background-color: #fffcfa; padding: 32px 16px; font-family: 'Helvetica Neue', Arial, sans-serif;">
       <div style="max-width: 480px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; padding: 32px;">
-        <h1 style="margin: 0 0 8px; color: #5b0015; font-size: 22px;">¡Gracias por tu compra!</h1>
+        <h1 style="margin: 0 0 8px; color: #5b0015; font-size: 22px;">${greeting}</h1>
         <p style="margin: 0 0 24px; color: #2f2b2c80; font-size: 14px;">
           Pedido #${orderId.slice(0, 8)} confirmado y pagado.
         </p>
@@ -79,22 +89,27 @@ function renderOrderConfirmationHtml({ orderId, items, total }: OrderConfirmatio
 /**
  * Sends the order confirmation email via Resend.
  *
+ * `recipientName` is optional and purely cosmetic (used for the email
+ * greeting only) — pass `null` when no name is available for either a
+ * registered customer or a guest checkout.
+ *
  * Callers (the Mercado Pago webhook) must wrap this in a `try/catch`: a
  * failure here must never fail the webhook response itself, since Mercado
  * Pago retries non-2xx responses, which would needlessly re-run order
  * reconciliation.
  */
 export async function sendOrderConfirmationEmail(
-  userEmail: string,
+  recipientEmail: string,
+  recipientName: string | null,
   orderDetails: OrderConfirmationDetails,
 ): Promise<void> {
   const resend = getResendClient();
 
   const { error } = await resend.emails.send({
     from: process.env.RESEND_FROM_EMAIL!,
-    to: userEmail,
+    to: recipientEmail,
     subject: `Cairo — Confirmación de tu pedido #${orderDetails.orderId.slice(0, 8)}`,
-    html: renderOrderConfirmationHtml(orderDetails),
+    html: renderOrderConfirmationHtml(recipientName, orderDetails),
   });
 
   if (error) {

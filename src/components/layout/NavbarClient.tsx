@@ -3,6 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { useEffect, useState } from "react";
+import { usePathname } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { Menu, ShoppingBag } from "lucide-react";
 import { useCartStore } from "@/store/useCartStore";
@@ -31,14 +32,24 @@ interface NavbarClientProps {
  * session check or loading placeholder needed.
  */
 export function NavbarClient({ user, fullName }: NavbarClientProps) {
+  const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+
+  // The admin backoffice (`AdminShell`) has its own sidebar/topbar
+  // navigation — the public drawer trigger would be redundant (and
+  // visually conflicting) there, so it's hidden on every `/admin` route.
+  const isAdminRoute = pathname?.startsWith("/admin") ?? false;
 
   // Sum item quantities for the cart badge. Selecting only `items` keeps the
   // subscription minimal; the sum itself is cheap to recompute on change.
   const totalItems = useCartStore((state) =>
     state.items.reduce((sum, item) => sum + item.quantity, 0),
   );
+  // Gates the badge until the `persist` middleware has rehydrated from
+  // `localStorage` (see `useCartStore`), so a returning visitor never sees
+  // the badge flash from empty to their real cart count right after mount.
+  const hasHydrated = useCartStore((state) => state.hasHydrated);
 
   useEffect(() => {
     function handleScroll(): void {
@@ -65,17 +76,23 @@ export function NavbarClient({ user, fullName }: NavbarClientProps) {
             isCollapsed ? "h-14" : "h-20"
           }`}
         >
-          {/* Left: hamburger trigger for the sliding navigation drawer */}
+          {/* Left: the hamburger trigger is now the only navigation entry
+              point on the public storefront — the text nav links were
+              removed in favor of a single `NavDrawer`-driven menu at every
+              breakpoint. Still hidden on `/admin` routes, which have their
+              own sidebar navigation. */}
           <div className="flex items-center justify-start">
-            <button
-              type="button"
-              aria-label="Open navigation menu"
-              aria-expanded={isDrawerOpen}
-              onClick={() => setIsDrawerOpen(true)}
-              className="text-cairo-text transition-colors hover:text-cairo-primary"
-            >
-              <Menu className="h-6 w-6" />
-            </button>
+            {!isAdminRoute && (
+              <button
+                type="button"
+                aria-label="Open navigation menu"
+                aria-expanded={isDrawerOpen}
+                onClick={() => setIsDrawerOpen(true)}
+                className="text-cairo-text transition-colors hover:text-cairo-primary"
+              >
+                <Menu className="h-6 w-6" />
+              </button>
+            )}
           </div>
 
           {/* Center: logo. Full wordmark (logo-cairo.svg) on desktop while
@@ -140,7 +157,7 @@ export function NavbarClient({ user, fullName }: NavbarClientProps) {
               className="relative flex items-center text-cairo-text transition-colors hover:text-cairo-primary"
             >
               <ShoppingBag className="h-6 w-6" />
-              {totalItems > 0 && (
+              {hasHydrated && totalItems > 0 && (
                 <span className="absolute -right-2 -top-2 flex h-5 w-5 items-center justify-center rounded-full bg-cairo-primary text-xs font-semibold text-cairo-bg">
                   {totalItems}
                 </span>

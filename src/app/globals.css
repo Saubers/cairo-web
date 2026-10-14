@@ -4,13 +4,32 @@
    (theme.extend.colors / theme.extend.fontFamily) into Tailwind v4. */
 @config "../../tailwind.config.ts";
 
-/* Smooth-scrolls to in-page anchors (e.g. the "#contacto" link in the
-   Navbar/drawer) instead of jumping instantly. */
-html {
-  scroll-behavior: smooth;
+/* `scroll-behavior: smooth` previously lived here for in-page anchor links, but it's a
+   blanket rule — it also animates any scroll adjustment the browser makes on its own (e.g.
+   scroll anchoring to a sibling section as content resizes). Forcing `auto` here makes any such
+   involuntary scroll instant instead of an animated glide.
+   `overflow-anchor: none` is applied at both `html` and `body` levels (not just `body`) because
+   `html`, not `body`, is this app's actual scrolling box — a `body`-only rule doesn't stop the
+   browser from anchoring scroll to a sibling section when a section's height changes. */
+html,
+body {
+  overflow-anchor: none !important;
+  scroll-behavior: auto !important;
 }
 
 /* The storefront keeps a single, consistent brand look regardless of the
    user's OS color scheme preference — no automatic dark mode. Background,
    text color, and the default font are applied via Tailwind utility
    classes on <body> in src/app/layout.tsx, not here. */
+
+/* Hides the scrollbar on horizontally-scrollable strips (e.g. the product
+   gallery thumbnails) while keeping the element fully scrollable by touch,
+   mouse-drag, or arrow buttons. Not a Tailwind v4 built-in utility. */
+.scrollbar-hide {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}

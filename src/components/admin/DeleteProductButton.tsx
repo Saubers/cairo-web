@@ -40,7 +40,7 @@ export function DeleteProductButton({ productId, productName }: DeleteProductBut
         type="button"
         onClick={() => setIsModalOpen(true)}
         aria-label="Eliminar producto"
-        className="rounded-md p-1.5 text-cairo-text/50 transition-all duration-200 ease-in-out hover:bg-red-50 hover:text-red-600"
+        className="rounded-md p-2 text-cairo-text/50 transition-colors duration-200 hover:bg-red-50 hover:text-red-600"
       >
         <Trash2 className="h-4 w-4" />
       </button>

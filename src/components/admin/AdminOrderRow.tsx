@@ -29,7 +29,7 @@ export function AdminOrderRow({ href, children }: AdminOrderRowProps) {
       tabIndex={0}
       onClick={() => router.push(href)}
       onKeyDown={handleKeyDown}
-      className="cursor-pointer border-b border-cairo-text/5 transition-all duration-200 ease-in-out last:border-0 hover:bg-cairo-accent-blue/10"
+      className="cursor-pointer border-b border-cairo-text/5 transition-colors duration-200 last:border-0 hover:bg-cairo-accent-blue/10"
     >
       {children}
     </tr>

@@ -50,16 +50,16 @@ export default async function MisPedidosPage() {
         <div className="mt-12 flex flex-col items-center gap-4 rounded-lg border border-cairo-text/10 bg-cairo-bg px-6 py-16 text-center">
           <ShoppingBag className="h-10 w-10 text-cairo-text/30" />
           <div>
-            <p className="font-medium text-cairo-text">Todavía no realizaste ninguna compra</p>
+            <p className="font-medium text-cairo-text">Aún no tenés pedidos</p>
             <p className="mt-1 text-sm text-cairo-text/60">
-              Cuando hagas tu primer pedido, lo vas a ver reflejado acá.
+              ¡Es un buen momento para darte un gusto!
             </p>
           </div>
           <Link
-            href="/catalogo"
+            href="/colecciones"
             className="mt-2 rounded-full bg-cairo-primary px-6 py-2.5 text-sm font-medium text-white transition-opacity hover:opacity-90"
           >
-            Explorar el catálogo
+            Explorar catálogo
           </Link>
         </div>
       ) : (
