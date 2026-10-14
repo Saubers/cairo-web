@@ -10,6 +10,14 @@ const ADMIN_PATH_PREFIX = "/admin";
 const AUTH_PATH_PREFIX = "/auth";
 const LOGIN_PATH = "/auth/login";
 
+// Password recovery deliberately signs the user in (Supabase's PKCE
+// exchange in `/auth/callback` establishes a real session so the recovery
+// token can be validated) before they ever see this screen. Without this
+// exception, the generic "already logged in -> bounce out of /auth/*" rule
+// below would redirect them away from the very form they need to set a new
+// password, turning the callback's redirect into a dead end.
+const AUTH_PATHS_ALLOWED_WHILE_LOGGED_IN = ["/auth/update-password"];
+
 /**
  * Runs on (almost) every page navigation to keep the Supabase auth session
  * cookie fresh, and performs an *optimistic* role check on `/admin/*` routes.
@@ -64,7 +72,11 @@ export async function proxy(request: NextRequest) {
     // so there is zero flash of the auth form. The page-level `redirect()` in
     // `app/auth/login/page.tsx` and `app/auth/register/page.tsx` is the
     // authoritative fallback (e.g. if this cookie-only check is ever bypassed).
-    if (pathname.startsWith(AUTH_PATH_PREFIX) && user) {
+    const isAllowedWhileLoggedIn = AUTH_PATHS_ALLOWED_WHILE_LOGGED_IN.some((allowedPath) =>
+      pathname.startsWith(allowedPath),
+    );
+
+    if (pathname.startsWith(AUTH_PATH_PREFIX) && user && !isAllowedWhileLoggedIn) {
       return NextResponse.redirect(new URL("/", request.url));
     }
 
