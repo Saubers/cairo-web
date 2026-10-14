@@ -8,8 +8,12 @@
 /** Application role stored on `profiles.role`. Exactly two users may hold 'admin'. */
 export type UserRole = "customer" | "admin";
 
-/** Lifecycle states for an order, driven primarily by the Mercado Pago webhook. */
-export type OrderStatus = "pending" | "in_process" | "paid" | "rejected" | "cancelled";
+/**
+ * Lifecycle states for an order. `paid` is driven by the Mercado Pago
+ * webhook; `shipped` is set manually by an admin once the order is
+ * dispatched to a carrier.
+ */
+export type OrderStatus = "pending" | "in_process" | "paid" | "shipped" | "rejected" | "cancelled";
 
 /** Mirrors the `public.profiles` table (1:1 extension of `auth.users`). */
 export interface UserProfile {
@@ -90,6 +94,10 @@ export interface Order {
   guestAddressCity: string | null;
   guestAddressState: string | null;
   guestAddressZip: string | null;
+  /** Set by an admin once `status` is `"shipped"`; `null` until then. */
+  trackingNumber: string | null;
+  /** Carrier name (e.g. "Correo Argentino", "Andreani"); `null` until shipped. */
+  shippingProvider: string | null;
   createdAt: string;
   updatedAt: string;
 }

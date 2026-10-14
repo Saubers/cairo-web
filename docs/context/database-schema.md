@@ -87,7 +87,7 @@ create table public.orders (
   id uuid primary key default gen_random_uuid(),
   user_id uuid references public.profiles (id) on delete set null,  -- nullable: allow guest checkout if desired
   status text not null default 'pending'
-    check (status in ('pending', 'in_process', 'paid', 'rejected', 'cancelled')),
+    check (status in ('pending', 'in_process', 'paid', 'shipped', 'rejected', 'cancelled')),
   total numeric(12,2) not null check (total >= 0),
   mp_preference_id text,                 -- Mercado Pago preference ID
   mp_payment_id text unique,             -- Mercado Pago payment ID (unique → idempotency guard)
@@ -104,6 +104,9 @@ create table public.orders (
   guest_address_city text,
   guest_address_state text,
   guest_address_zip text,
+  -- Populated only once an admin marks the order "shipped" — see §20261014120000_add_order_shipping_fields.sql.
+  tracking_number text,
+  shipping_provider text,                -- e.g. "Correo Argentino", "Andreani"
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );

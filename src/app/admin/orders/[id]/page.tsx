@@ -132,7 +132,12 @@ export default async function AdminOrderDetailPage(props: PageProps<"/admin/orde
 
           <Card title="Estado del pedido" description="Actualizá el estado para notificar el avance.">
             <div className="px-6 py-5">
-              <OrderStatusForm orderId={order.id} currentStatus={order.status} />
+              <OrderStatusForm
+                orderId={order.id}
+                currentStatus={order.status}
+                currentTrackingNumber={order.trackingNumber}
+                currentShippingProvider={order.shippingProvider}
+              />
             </div>
           </Card>
         </div>

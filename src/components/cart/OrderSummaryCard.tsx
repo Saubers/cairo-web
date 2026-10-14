@@ -2,6 +2,7 @@ import Image from "next/image";
 import { ImageOff } from "lucide-react";
 import type { Order } from "@/types";
 import type { OrderItemWithImage } from "@/services/orderService";
+import { TrackingInfoCard } from "@/components/cart/TrackingInfoCard";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -73,6 +74,13 @@ export function OrderSummaryCard({
         </p>
         <p>CP {order.guestAddressZip}</p>
       </div>
+
+      {order.status === "shipped" && order.trackingNumber && order.shippingProvider && (
+        <TrackingInfoCard
+          trackingNumber={order.trackingNumber}
+          shippingProvider={order.shippingProvider}
+        />
+      )}
     </div>
   );
 }

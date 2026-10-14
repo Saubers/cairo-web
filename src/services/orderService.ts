@@ -45,6 +45,8 @@ interface OrderRow {
   guest_address_city: string | null;
   guest_address_state: string | null;
   guest_address_zip: string | null;
+  tracking_number: string | null;
+  shipping_provider: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -64,7 +66,8 @@ interface OrderItemRow {
 const ORDER_COLUMNS =
   "id, user_id, status, total, mp_preference_id, mp_payment_id, guest_email, guest_name, " +
   "guest_phone, guest_dni, guest_address_street, guest_address_number, guest_address_floor_apt, " +
-  "guest_address_city, guest_address_state, guest_address_zip, created_at, updated_at";
+  "guest_address_city, guest_address_state, guest_address_zip, tracking_number, shipping_provider, " +
+  "created_at, updated_at";
 
 const ORDER_ITEM_COLUMNS =
   "id, order_id, product_id, product_name, unit_price, quantity, subtotal, created_at";
@@ -87,6 +90,8 @@ function mapRowToOrder(row: OrderRow): Order {
     guestAddressCity: row.guest_address_city,
     guestAddressState: row.guest_address_state,
     guestAddressZip: row.guest_address_zip,
+    trackingNumber: row.tracking_number,
+    shippingProvider: row.shipping_provider,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };

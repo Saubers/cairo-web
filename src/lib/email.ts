@@ -116,3 +116,42 @@ export async function sendOrderConfirmationEmail(
     throw new Error(`Failed to send order confirmation email: ${error.message}`);
   }
 }
+
+/**
+ * [STUB] Notifies a customer that their order has shipped.
+ *
+ * This is intentionally a no-op placeholder (just a `console.log`) rather
+ * than a real Resend call. To wire it up for real:
+ *
+ * 1. Write a `renderOrderShippedHtml(...)` function, following the exact
+ *    pattern of `renderOrderConfirmationHtml` above (inline-styled HTML,
+ *    no `react-email` dependency), that renders `trackingNumber` and
+ *    `provider` into a branded template.
+ * 2. Replace the `console.log` below with:
+ *    ```ts
+ *    const resend = getResendClient();
+ *    const { error } = await resend.emails.send({
+ *      from: process.env.RESEND_FROM_EMAIL!,
+ *      to: customerEmail,
+ *      subject: `Cairo — Tu pedido #${orderId.slice(0, 8)} está en camino`,
+ *      html: renderOrderShippedHtml(trackingNumber, provider),
+ *    });
+ *    if (error) {
+ *      throw new Error(`Failed to send shipping notification email: ${error.message}`);
+ *    }
+ *    ```
+ *
+ * Callers must wrap this in a `try/catch`, same as `sendOrderConfirmationEmail`
+ * — a failed notification must never roll back or block the admin's status
+ * update that triggered it.
+ */
+export async function sendShippingEmail(
+  orderId: string,
+  customerEmail: string,
+  trackingNumber: string,
+  provider: string,
+): Promise<void> {
+  console.log(
+    `[STUB] sendShippingEmail: would notify ${customerEmail} that order ${orderId} shipped via ${provider} (tracking: ${trackingNumber}).`,
+  );
+}

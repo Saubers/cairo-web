@@ -3,8 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { toSafeErrorMessage, type ActionResult } from "@/lib/actionResult";
-import { ADMIN_ORDERS_EXPORT_LIMIT, getOrdersForAdmin } from "@/services/orderService";
+import { ADMIN_ORDERS_EXPORT_LIMIT, getOrderForAdmin, getOrdersForAdmin } from "@/services/orderService";
 import { ORDER_STATUS_BADGE } from "@/lib/orderStatus";
+import { sendShippingEmail } from "@/lib/email";
 import type { OrderStatus } from "@/types";
 
 const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", { dateStyle: "medium" });
@@ -19,14 +20,34 @@ const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", { dateStyle: "medium" })
 // Postgres error messages never reach the client.
 // -----------------------------------------------------------------------------
 
-/** Updates an order's lifecycle status from the admin detail page. */
-export async function updateOrderStatus(
-  orderId: string,
-  status: OrderStatus,
-): Promise<ActionResult> {
+/** Payload accepted by `updateOrderStatus`; tracking fields only apply to "shipped". */
+export interface UpdateOrderStatusInput {
+  orderId: string;
+  status: OrderStatus;
+  trackingNumber?: string;
+  shippingProvider?: string;
+}
+
+/**
+ * Updates an order's lifecycle status from the admin detail page. When the
+ * new status is `"shipped"`, also persists the carrier + tracking number and
+ * fires the (stubbed) shipping notification email.
+ */
+export async function updateOrderStatus({
+  orderId,
+  status,
+  trackingNumber,
+  shippingProvider,
+}: UpdateOrderStatusInput): Promise<ActionResult> {
   const supabase = await createClient();
 
-  const { error } = await supabase.from("orders").update({ status }).eq("id", orderId);
+  const updatePayload: Record<string, unknown> = { status };
+  if (status === "shipped") {
+    updatePayload.tracking_number = trackingNumber;
+    updatePayload.shipping_provider = shippingProvider;
+  }
+
+  const { error } = await supabase.from("orders").update(updatePayload).eq("id", orderId);
 
   if (error) {
     return { error: toSafeErrorMessage(error, "No se pudo actualizar el estado del pedido.") };
@@ -34,6 +55,20 @@ export async function updateOrderStatus(
 
   revalidatePath("/admin/orders");
   revalidatePath(`/admin/orders/${orderId}`);
+
+  // A failed notification must never roll back or block the status update
+  // that already succeeded above — see `sendShippingEmail`'s own docstring.
+  if (status === "shipped" && trackingNumber && shippingProvider) {
+    try {
+      const result = await getOrderForAdmin(orderId);
+      if (result?.order.guestEmail) {
+        await sendShippingEmail(orderId, result.order.guestEmail, trackingNumber, shippingProvider);
+      }
+    } catch (emailError) {
+      console.error("Failed to send shipping notification email:", emailError);
+    }
+  }
+
   return {};
 }
 

@@ -20,6 +20,7 @@ const STATUS_DISPLAY: Record<OrderStatus, { label: string; className: string }> 
   pending: { label: "Pendiente", className: "bg-cairo-text/10 text-cairo-text/70" },
   in_process: { label: "En proceso", className: "bg-cairo-accent-yellow text-cairo-text" },
   paid: { label: "Pagado", className: "bg-cairo-accent-blue/40 text-cairo-text" },
+  shipped: { label: "Enviado", className: "bg-purple-100 text-purple-800" },
   rejected: { label: "Rechazado", className: "bg-red-50 text-red-700" },
   cancelled: { label: "Cancelado", className: "bg-cairo-text/10 text-cairo-text/50" },
 };
