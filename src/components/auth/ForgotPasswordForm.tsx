@@ -45,10 +45,15 @@ export function ForgotPasswordForm() {
     try {
       const supabase = createClient();
 
+      // Routes through the server-side `/auth/callback` (not straight to
+      // `/auth/update-password`) so `exchangeCodeForSession` runs server-side
+      // and the session cookie is already set before the update-password
+      // page's first render — the same fix applied to the signup-confirmation
+      // flow, now reused here to avoid the same "auth limbo" symptom.
       // `window.location.origin` keeps this working across environments
       // (local dev, staging, production) without hardcoding a domain.
       const { error } = await supabase.auth.resetPasswordForEmail(values.email, {
-        redirectTo: `${window.location.origin}/auth/update-password`,
+        redirectTo: `${window.location.origin}/auth/callback?next=/auth/update-password`,
       });
 
       if (error) {

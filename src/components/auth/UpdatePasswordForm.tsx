@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Eye, EyeOff } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -40,8 +40,18 @@ export function UpdatePasswordForm() {
   const {
     register,
     handleSubmit,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<UpdatePasswordFormValues>({ resolver: zodResolver(updatePasswordSchema) });
+
+  // `useWatch` (not `methods.watch()`) is the React Compiler-compatible way
+  // to subscribe to a field's live value — same pattern as `ForgotPasswordForm`.
+  const passwordValue = useWatch({ control, name: "password" });
+
+  // Reuses the same password rule the submit handler validates against, so
+  // the button's color and the actual validation can never disagree — same
+  // reasoning as `ForgotPasswordForm`'s `isEmailValid`.
+  const isPasswordValid = updatePasswordSchema.shape.password.safeParse(passwordValue).success;
 
   useEffect(() => {
     const supabase = createClient();
@@ -157,7 +167,11 @@ export function UpdatePasswordForm() {
       <button
         type="submit"
         disabled={isSubmitting || sessionStatus === "verifying"}
-        className="w-full rounded-md bg-black px-4 py-2 text-sm font-medium text-white transition-opacity duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
+        className={`w-full rounded-md px-4 py-2 text-sm font-medium transition-colors duration-200 ease-in-out disabled:opacity-50 ${
+          isPasswordValid
+            ? "bg-cairo-primary text-white hover:opacity-90"
+            : "bg-gray-300 text-gray-500"
+        }`}
       >
         {sessionStatus === "verifying"
           ? "Verificando enlace..."
