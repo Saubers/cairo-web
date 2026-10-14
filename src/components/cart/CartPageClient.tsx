@@ -113,9 +113,25 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
         }),
       });
 
+      // Only parse as JSON if the server actually says it sent JSON. A crash
+      // in the Route Handler (e.g. a missing env var, an uncaught exception
+      // on the edge runtime) can come back with an empty body or an HTML
+      // error page — calling `.json()` on that throws "Unexpected end of
+      // JSON input", which is confusing to catch and impossible to show the
+      // user anything useful about. Reading it as text first lets us surface
+      // a real (if generic) message in every case instead.
+      const contentType = response.headers.get("content-type") ?? "";
+      const isJsonResponse = contentType.includes("application/json");
+
+      if (!response.ok || !isJsonResponse) {
+        const rawText = await response.text();
+        console.error("Checkout request failed:", response.status, rawText);
+        throw new Error("No pudimos iniciar el pago. Intentá nuevamente.");
+      }
+
       const body: unknown = await response.json();
 
-      if (!response.ok || !isCheckoutSuccessResponse(body)) {
+      if (!isCheckoutSuccessResponse(body)) {
         const message =
           typeof body === "object" && body !== null && typeof (body as { error?: unknown }).error === "string"
             ? (body as { error: string }).error

@@ -6,9 +6,23 @@ import { calculateDiscountedPrice } from "@/lib/utils";
 import { calculateShipping, FREE_SHIPPING_THRESHOLD, FLAT_SHIPPING_RATE } from "@/lib/shipping";
 import { checkoutSchema, type CheckoutFormValues } from "@/lib/validation/checkoutSchema";
 
-const mercadoPagoConfig = new MercadoPagoConfig({
-  accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN!,
-});
+// [EDGE SAFETY] `MercadoPagoConfig` is NOT instantiated at module scope
+// anymore. On Cloudflare's Workers runtime a throw during module
+// evaluation (e.g. the env var below being unset at cold start) crashes the
+// whole module before `POST` ever runs — Next.js has no JSON response to
+// return at that point, so the client's `response.json()` sees an empty
+// body and blows up with "Unexpected end of JSON input". Constructing it
+// lazily, inside the handler's try/catch, turns that same failure into a
+// normal, catchable error with a real JSON response instead.
+function getMercadoPagoConfig(): MercadoPagoConfig {
+  const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    throw new Error("MERCADOPAGO_ACCESS_TOKEN is not configured.");
+  }
+
+  return new MercadoPagoConfig({ accessToken });
+}
 
 interface CheckoutItemInput {
   productId: string;
@@ -81,7 +95,8 @@ function parseCheckoutRequest(body: unknown): CheckoutRequestBody {
 }
 
 /**
- * Creates a PENDING order from the current cart.
+ * Creates a PENDING order from the current cart and a Mercado Pago payment
+ * preference for it.
  *
  * [CRITICAL] Prices are never trusted from the client. Every item's
  * `unit_price` is looked up fresh from `products` via the service-role
@@ -92,12 +107,31 @@ function parseCheckoutRequest(body: unknown): CheckoutRequestBody {
  * price, and the discount is (re-)applied here — the cart's own discounted
  * price is only a client-side preview.
  *
- * Runs as a Route Handler (not a Server Action) because it also needs to be
- * callable directly from a future Mercado Pago preference-creation step —
- * that step, and the eventual payment webhook, are intentionally out of
- * scope here; this endpoint only produces the PENDING order.
+ * [EDGE SAFETY] The actual logic lives in `handleCheckout` below, called
+ * from inside this outer try/catch. Every *expected* failure (bad input,
+ * out-of-stock items, a Supabase error field) already returns its own
+ * `NextResponse.json(...)` from within `handleCheckout`, but this outer
+ * boundary exists for the *unexpected* case — a thrown exception from the
+ * Supabase client, the Mercado Pago SDK, or a missing env var — so the route
+ * can never crash out without a body. On Cloudflare's edge runtime, an
+ * uncaught throw turns into an empty/HTML error response, which is exactly
+ * what made the frontend's `response.json()` fail with "Unexpected end of
+ * JSON input" instead of surfacing a readable error.
  */
-export async function POST(request: Request) {
+export async function POST(request: Request): Promise<NextResponse> {
+  try {
+    return await handleCheckout(request);
+  } catch (error) {
+    // Full detail goes to the server logs (visible in Cloudflare Pages'
+    // function logs) — never swallowed silently.
+    console.error("Unhandled error in /api/checkout:", error);
+
+    const details = error instanceof Error ? error.message : "Unknown error.";
+    return NextResponse.json({ error: "Internal Server Error", details }, { status: 500 });
+  }
+}
+
+async function handleCheckout(request: Request): Promise<NextResponse> {
   let parsed: CheckoutRequestBody;
 
   try {
@@ -233,11 +267,14 @@ export async function POST(request: Request) {
   // map an incoming payment notification back to it.
   const siteUrl = process.env.NEXT_PUBLIC_SITE_URL!;
 
-  const preference = new Preference(mercadoPagoConfig);
-
   let initPoint: string;
 
   try {
+    // Constructed inside this try block (not above it) so a missing/invalid
+    // `MERCADOPAGO_ACCESS_TOKEN` is caught here too, triggering the same
+    // order rollback as any other preference-creation failure below.
+    const preference = new Preference(getMercadoPagoConfig());
+
     const preferenceResponse = await preference.create({
       body: {
         items: [
