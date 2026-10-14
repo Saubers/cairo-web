@@ -1,5 +1,5 @@
 // Next.js 16 renamed the `middleware.ts` file convention to `proxy.ts`
-// (same export shape, different name/location semantics) — see
+// (same export shape, different name) — see
 // node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md.
 // `middleware.ts` would silently be ignored on this version, so this file
 // must be named `proxy.ts` and export a `proxy` function.
@@ -8,10 +8,11 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const ADMIN_PATH_PREFIX = "/admin";
 const AUTH_PATH_PREFIX = "/auth";
+const LOGIN_PATH = "/auth/login";
 
 /**
- * Runs on (almost) every request to keep the Supabase auth session cookie
- * fresh, and performs an *optimistic* role check on `/admin/*` routes.
+ * Runs on (almost) every page navigation to keep the Supabase auth session
+ * cookie fresh, and performs an *optimistic* role check on `/admin/*` routes.
  *
  * Per Next.js guidance, Proxy should not be relied on as the sole
  * authorization layer (it should not do slow/critical data fetching) — the
@@ -19,67 +20,98 @@ const AUTH_PATH_PREFIX = "/auth";
  * `src/app/admin/layout.tsx` and the `is_admin()` RLS policies. This is
  * only the first, cheapest line of defense: it discards obviously
  * unauthenticated/non-admin requests before they reach the layout.
+ *
+ * Every Supabase call is wrapped in try/catch: on edge-style platforms like
+ * Cloudflare Pages, a cold-start or network failure while initializing the
+ * SSR client or refreshing the session must never surface as an unhandled
+ * exception here, since that would crash the whole request with a 500 —
+ * including on public, unauthenticated storefront routes that have nothing
+ * to do with auth.
  */
 export async function proxy(request: NextRequest) {
-  let response = NextResponse.next({ request });
+  const { pathname } = request.nextUrl;
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
-          response = NextResponse.next({ request });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            response.cookies.set(name, value, options),
-          );
+  try {
+    let response = NextResponse.next({ request });
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet) {
+            cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value));
+            response = NextResponse.next({ request });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options),
+            );
+          },
         },
       },
-    },
-  );
+    );
 
-  // IMPORTANT: this call also refreshes the session and must not be
-  // removed — @supabase/ssr relies on it to rewrite the auth cookies above.
-  const { data: { user } } = await supabase.auth.getUser();
+    // IMPORTANT: this call also refreshes the session and must not be
+    // removed — @supabase/ssr relies on it to rewrite the auth cookies above.
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
 
-  // Already-logged-in visitors have no business on the login/register
-  // screens — redirect at the edge, before the page even starts rendering,
-  // so there is zero flash of the auth form. The page-level `redirect()` in
-  // `app/auth/login/page.tsx` and `app/auth/register/page.tsx` is the
-  // authoritative fallback (e.g. if this cookie-only check is ever bypassed).
-  if (request.nextUrl.pathname.startsWith(AUTH_PATH_PREFIX) && user) {
-    return NextResponse.redirect(new URL("/", request.url));
-  }
-
-  if (request.nextUrl.pathname.startsWith(ADMIN_PATH_PREFIX)) {
-    if (!user) {
-      return NextResponse.redirect(new URL("/auth/login?redirect=/admin", request.url));
-    }
-
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle<{ role: string }>();
-
-    if (profile?.role !== "admin") {
+    // Already-logged-in visitors have no business on the login/register
+    // screens — redirect at the edge, before the page even starts rendering,
+    // so there is zero flash of the auth form. The page-level `redirect()` in
+    // `app/auth/login/page.tsx` and `app/auth/register/page.tsx` is the
+    // authoritative fallback (e.g. if this cookie-only check is ever bypassed).
+    if (pathname.startsWith(AUTH_PATH_PREFIX) && user) {
       return NextResponse.redirect(new URL("/", request.url));
     }
-  }
 
-  return response;
+    if (pathname.startsWith(ADMIN_PATH_PREFIX)) {
+      if (!user) {
+        return NextResponse.redirect(new URL(`${LOGIN_PATH}?redirect=/admin`, request.url));
+      }
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle<{ role: string }>();
+
+      // A failed role lookup is treated the same as "not an admin": fail
+      // closed on the protected route instead of letting a Supabase error
+      // propagate into a crash.
+      if (profileError || profile?.role !== "admin") {
+        return NextResponse.redirect(new URL("/", request.url));
+      }
+    }
+
+    return response;
+  } catch (error) {
+    console.error("Error in proxy while refreshing the Supabase session:", error);
+
+    // A failure here (e.g. Supabase unreachable, cold-start network error)
+    // must never crash the public storefront with a 500. Protected routes
+    // fail closed (redirect to login); every other route proceeds without a
+    // refreshed session, relying on page-level checks and RLS as the
+    // authoritative layer.
+    if (pathname.startsWith(ADMIN_PATH_PREFIX)) {
+      return NextResponse.redirect(new URL(`${LOGIN_PATH}?redirect=/admin`, request.url));
+    }
+
+    return NextResponse.next();
+  }
 }
 
 export const config = {
   matcher: [
     /*
-     * Run on everything except static assets and image optimization files,
-     * so the session cookie stays fresh across the whole app.
+     * Run only on actual page navigations: skip Next.js internals
+     * (_next/static, _next/image), favicon.ico, and any request for a
+     * static asset file (identified by its file extension — images, fonts,
+     * stylesheets, scripts, etc.), so Proxy never intercepts static files.
      */
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)",
+    "/((?!_next/static|_next/image|favicon\\.ico|.*\\.(?:ico|png|jpg|jpeg|gif|webp|avif|svg|css|js|woff|woff2|ttf|eot|map|txt|xml|json)$).*)",
   ],
 };
