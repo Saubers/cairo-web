@@ -34,6 +34,12 @@ export default async function LoginPage(props: PageProps<"/auth/login">) {
 
       <LoginForm />
 
+      <p className="mt-4 text-center text-sm text-cairo-text/60">
+        <Link href="/auth/forgot-password" className="text-cairo-primary hover:underline">
+          ¿Olvidaste tu contraseña?
+        </Link>
+      </p>
+
       <p className="mt-6 text-center text-sm text-cairo-text/60">
         ¿No tenés cuenta?{" "}
         <Link href="/auth/register" className="text-cairo-primary hover:underline">

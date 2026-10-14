@@ -32,3 +32,15 @@ export const registerSchema = z
   });
 
 export type RegisterFormValues = z.infer<typeof registerSchema>;
+
+export const forgotPasswordSchema = z.object({
+  email: z.email("Ingresá un email válido.").trim().min(1, "Ingresá tu email."),
+});
+
+export type ForgotPasswordFormValues = z.infer<typeof forgotPasswordSchema>;
+
+export const updatePasswordSchema = z.object({
+  password: passwordSchema,
+});
+
+export type UpdatePasswordFormValues = z.infer<typeof updatePasswordSchema>;

@@ -5,6 +5,10 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { loginSchema, registerSchema } from "@/lib/validation/authSchemas";
 
+// Same fallback as `app/layout.tsx` — keeps local dev working without the
+// env var set, while production always has `NEXT_PUBLIC_SITE_URL` defined.
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+
 /**
  * Supabase's raw `AuthError.message` is in English and sometimes too
  * technical to show a customer directly (e.g. "User already registered").
@@ -71,7 +75,13 @@ export async function signup(values: unknown): Promise<AuthActionResult> {
   const { error } = await supabase.auth.signUp({
     email,
     password,
-    options: { data: { full_name: fullName } },
+    options: {
+      data: { full_name: fullName },
+      // Sends the confirmation link through `/auth/callback`, which
+      // exchanges the PKCE code for a session server-side before
+      // redirecting — see that route for why this matters.
+      emailRedirectTo: `${SITE_URL}/auth/callback`,
+    },
   });
 
   if (error) {
