@@ -34,9 +34,21 @@ interface OrderRecipient {
   source: "registered" | "guest";
 }
 
-const mercadoPagoConfig = new MercadoPagoConfig({
-  accessToken: process.env.MERCADOPAGO_ACCESS_TOKEN!,
-});
+// [EDGE SAFETY] Constructed lazily inside the handler instead of at module
+// scope — same reasoning as `getMercadoPagoConfig` in `/api/checkout/route.ts`.
+// A throw during module evaluation (e.g. a missing env var at cold start) on
+// Cloudflare's Workers runtime would crash the whole module before `POST`
+// ever runs, leaving Mercado Pago with no valid HTTP response and triggering
+// endless notification retries.
+function getMercadoPagoConfig(): MercadoPagoConfig {
+  const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+
+  if (!accessToken) {
+    throw new Error("MERCADOPAGO_ACCESS_TOKEN is not configured.");
+  }
+
+  return new MercadoPagoConfig({ accessToken });
+}
 
 /**
  * Resolves who should receive the order confirmation email, covering both
@@ -128,6 +140,15 @@ async function notifyOrderPaid(
  * notifications — fetches the payment and marks the matching order as
  * `paid` via the service-role client (the only client allowed to write to
  * `orders`, per RLS).
+ *
+ * [EDGE SAFETY] The whole body runs inside an outer try/catch so an
+ * unexpected throw (a missing env var, a Supabase/Mercado Pago SDK error)
+ * never crashes the route without a response. Any failure here returns a
+ * non-2xx status on purpose — Mercado Pago's own retry mechanism is the
+ * expected recovery path for a transient failure (e.g. Supabase briefly
+ * unreachable), whereas the inner `notifyOrderPaid` failure is deliberately
+ * swallowed below since that email failure must never trigger a retry of
+ * an already-successful order reconciliation.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const url = new URL(request.url);
@@ -147,52 +168,73 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
   }
 
-  const body: unknown = await request.json().catch(() => null);
-  const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
-  const notificationType = record?.type;
+  try {
+    const body: unknown = await request.json().catch(() => null);
+    const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : null;
+    const notificationType = record?.type;
 
-  if (notificationType !== "payment" || !dataId) {
-    // Not a payment notification (or missing id) — acknowledge and ignore.
-    return NextResponse.json({ received: true }, { status: 200 });
-  }
-
-  const payment = new Payment(mercadoPagoConfig);
-  const paymentResponse = await payment.get({ id: dataId });
-
-  if (paymentResponse.status === "approved" && paymentResponse.external_reference) {
-    const service = createServiceClient(process.env.SUPABASE_SERVICE_ROLE_KEY!);
-    const orderId = paymentResponse.external_reference;
-
-    const { data: existingOrder } = await service
-      .from("orders")
-      .select("id, user_id, status, total, guest_email, guest_name")
-      .eq("id", orderId)
-      .maybeSingle<OrderRow>();
-
-    // Mercado Pago may redeliver the same notification. Re-processing an
-    // already-paid order would re-send the confirmation email, so this acts
-    // as the idempotency guard (see docs/context/tech-stack.md §3.5).
-    if (!existingOrder || existingOrder.status === "paid") {
+    if (notificationType !== "payment" || !dataId) {
+      // Not a payment notification (or missing id) — acknowledge and ignore.
       return NextResponse.json({ received: true }, { status: 200 });
     }
 
-    await service
-      .from("orders")
-      .update({
-        status: "paid",
-        mp_payment_id: String(paymentResponse.id),
-      })
-      .eq("id", orderId);
+    // Constructed inside this try block (not at module scope) so a
+    // missing/invalid `MERCADOPAGO_ACCESS_TOKEN` surfaces as a catchable
+    // error here instead of crashing the whole module on cold start.
+    const payment = new Payment(getMercadoPagoConfig());
+    const paymentResponse = await payment.get({ id: dataId });
 
-    // A failure sending the confirmation email must never surface as a
-    // webhook error — Mercado Pago retries non-2xx responses, which would
-    // needlessly re-run the (already-successful) order reconciliation above.
-    try {
-      await notifyOrderPaid(service, existingOrder);
-    } catch (emailError) {
-      console.error("Failed to send order confirmation email:", emailError);
+    if (paymentResponse.status === "approved" && paymentResponse.external_reference) {
+      // Resolved explicitly into a local `const` and validated before use —
+      // same pattern as `/api/checkout/route.ts` — so a missing service-role
+      // key fails with an unambiguous message in the server logs instead of
+      // the SDK's generic "supabaseKey is required." error.
+      const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+      if (!serviceRoleKey) {
+        throw new Error("CRITICAL: SUPABASE_SERVICE_ROLE_KEY is missing in Edge Runtime");
+      }
+
+      const service = createServiceClient(serviceRoleKey);
+      const orderId = paymentResponse.external_reference;
+
+      const { data: existingOrder } = await service
+        .from("orders")
+        .select("id, user_id, status, total, guest_email, guest_name")
+        .eq("id", orderId)
+        .maybeSingle<OrderRow>();
+
+      // Mercado Pago may redeliver the same notification. Re-processing an
+      // already-paid order would re-send the confirmation email, so this acts
+      // as the idempotency guard (see docs/context/tech-stack.md §3.5).
+      if (!existingOrder || existingOrder.status === "paid") {
+        return NextResponse.json({ received: true }, { status: 200 });
+      }
+
+      await service
+        .from("orders")
+        .update({
+          status: "paid",
+          mp_payment_id: String(paymentResponse.id),
+        })
+        .eq("id", orderId);
+
+      // A failure sending the confirmation email must never surface as a
+      // webhook error — Mercado Pago retries non-2xx responses, which would
+      // needlessly re-run the (already-successful) order reconciliation above.
+      try {
+        await notifyOrderPaid(service, existingOrder);
+      } catch (emailError) {
+        console.error("Failed to send order confirmation email:", emailError);
+      }
     }
-  }
 
-  return NextResponse.json({ received: true }, { status: 200 });
+    return NextResponse.json({ received: true }, { status: 200 });
+  } catch (error) {
+    // Full detail goes to the server logs (visible in Cloudflare Pages'
+    // function logs). The non-2xx status is intentional — it tells Mercado
+    // Pago to retry this notification instead of treating it as reconciled.
+    console.error("Unhandled error in /api/webhooks/mercadopago:", error);
+    return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+  }
 }
