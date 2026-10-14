@@ -3,6 +3,10 @@ import { MercadoPagoConfig, Payment, WebhookSignatureValidator } from "mercadopa
 import { createServiceClient } from "@/lib/supabase/service";
 import { sendOrderConfirmationEmail } from "@/lib/email";
 
+// Forces this route to always run per-request rather than being evaluated
+// (or cached) at build time — same reasoning as `/api/checkout/route.ts`.
+export const dynamic = "force-dynamic";
+
 interface OrderRow {
   id: string;
   user_id: string | null;

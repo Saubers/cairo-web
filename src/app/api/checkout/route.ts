@@ -6,6 +6,13 @@ import { calculateDiscountedPrice } from "@/lib/utils";
 import { calculateShipping, FREE_SHIPPING_THRESHOLD, FLAT_SHIPPING_RATE } from "@/lib/shipping";
 import { checkoutSchema, type CheckoutFormValues } from "@/lib/validation/checkoutSchema";
 
+// Forces this route to always run per-request rather than being evaluated
+// (or cached) at build time. Without this, a CLI-driven `next build` can
+// statically analyze this handler and bake in whatever `process.env` looks
+// like at build time instead of at request time — which is how the service
+// key ends up missing in production despite being set correctly.
+export const dynamic = "force-dynamic";
+
 // [EDGE SAFETY] `MercadoPagoConfig` is NOT instantiated at module scope
 // anymore. On Cloudflare's Workers runtime a throw during module
 // evaluation (e.g. the env var below being unset at cold start) crashes the
