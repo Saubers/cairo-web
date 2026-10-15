@@ -137,11 +137,15 @@ export async function sendOrderConfirmationEmail(
 
 // [TEMPORARY] Resend requires sending from a domain you've verified before
 // using your own address. `onboarding@resend.dev` is Resend's own sandbox
-// sender, usable with no domain setup — swap this for a verified
-// `pedidos@caccesorios.com`-style address (ideally promoted to its own
-// `RESEND_FROM_EMAIL`-style env var, mirroring `sendOrderConfirmationEmail`
-// below) once the user has verified a domain in the Resend dashboard.
-const SHIPPING_EMAIL_FROM = "onboarding@resend.dev";
+// sender, usable with no domain setup, but Resend's test mode only ever
+// delivers mail sent `from` this sandbox address to the Resend ACCOUNT
+// OWNER's own inbox — any other `to` recipient is silently accepted by the
+// API (no `error` in the response) and then dropped, which looks exactly
+// like "the email never arrived" with nothing to debug. This is the
+// fallback only; once a domain is verified in the Resend dashboard, set
+// `RESEND_FROM_EMAIL` (shared with `sendOrderConfirmationEmail` above,
+// e.g. "Cairo <pedidos@cairo.com.ar>") to send to real customers.
+const SHIPPING_EMAIL_FALLBACK_FROM = "onboarding@resend.dev";
 
 /**
  * Sends the "your order has shipped" notification via Resend, rendering
@@ -153,10 +157,17 @@ const SHIPPING_EMAIL_FROM = "onboarding@resend.dev";
  * escaping rather than needing a manual `escapeHtml` pass — React never
  * interprets string children as markup.
  *
- * Callers (the admin `updateOrderStatus` Server Action) must wrap this in a
- * `try/catch`: a failed notification must never roll back or block the
- * order-status update that already succeeded, the same contract as
- * `sendOrderConfirmationEmail`.
+ * [EDGE SAFETY] This function itself never throws — every failure path is
+ * caught and logged here instead. On Cloudflare's Workers runtime, a Route
+ * Handler / Server Action that returns (or whose promise settles) before an
+ * in-flight `fetch` to a third-party API resolves gets that request aborted
+ * mid-flight ("Workers runtime cancelled the request") — so the ONE thing
+ * that matters for this function is that every await in this call chain is
+ * explicit, all the way down to the final `resend.emails.send()`, and that
+ * the caller (`updateOrderStatus` in `src/app/admin/orders/actions.ts`)
+ * also `await`s this function rather than firing it off and returning
+ * immediately. A failed delivery is a logged failure, not an unhandled
+ * promise rejection racing against worker shutdown.
  */
 export async function sendShippingEmail(
   orderId: string,
@@ -166,9 +177,12 @@ export async function sendShippingEmail(
   customerName: string | null = null,
 ): Promise<void> {
   const resend = getResendClient();
+  const from = process.env.RESEND_FROM_EMAIL ?? SHIPPING_EMAIL_FALLBACK_FROM;
 
-  const { error } = await resend.emails.send({
-    from: SHIPPING_EMAIL_FROM,
+  console.log(`[RESEND] Sending shipping notification for order ${orderId} to ${customerEmail} from "${from}"...`);
+
+  const { data, error } = await resend.emails.send({
+    from,
     to: customerEmail,
     subject: `Cairo — Tu pedido #${orderId.slice(0, 8).toUpperCase()} está en camino`,
     react: (
@@ -181,7 +195,15 @@ export async function sendShippingEmail(
     ),
   });
 
+  // Never throw: a notification failure must not roll back or block the
+  // order-status update that already succeeded in the caller. Logging is
+  // the only diagnostic signal available here (visible in Cloudflare
+  // Pages' function logs) — this is the detail needed to tell "Resend
+  // rejected the request" (bad API key, unverified sender, sandbox-mode
+  // recipient restriction, etc.) apart from "the request never completed".
   if (error) {
-    throw new Error(`Failed to send shipping notification email: ${error.message}`);
+    console.error(`[RESEND ERROR] Failed to send shipping notification for order ${orderId}:`, error);
+  } else {
+    console.log(`[RESEND SUCCESS] Shipping notification sent to ${customerEmail}. Resend id: ${data?.id}`);
   }
 }

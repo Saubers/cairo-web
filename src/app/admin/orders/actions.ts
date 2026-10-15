@@ -58,6 +58,17 @@ export async function updateOrderStatus({
 
   // A failed notification must never roll back or block the status update
   // that already succeeded above — see `sendShippingEmail`'s own docstring.
+  //
+  // [EDGE SAFETY] The `await` on `sendShippingEmail` below is deliberate and
+  // required, not optional cleanliness: this Server Action runs as a
+  // Cloudflare Worker, and a Worker's request context is torn down as soon
+  // as the action's returned promise settles. Omitting the `await` (i.e.
+  // calling `sendShippingEmail(...)` without it, "fire and forget") would
+  // let this function return — and the Worker tear itself down — while the
+  // network call to Resend's API is still in flight, silently cancelling
+  // it before the email is ever sent. `sendShippingEmail` itself never
+  // throws (it logs its own failures), so this `try/catch` only guards
+  // `getOrderForAdmin` above it.
   if (status === "shipped" && trackingNumber && shippingProvider) {
     try {
       const result = await getOrderForAdmin(orderId);
