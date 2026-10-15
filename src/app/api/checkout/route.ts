@@ -156,14 +156,6 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // [DIAGNOSTIC] Logs only boolean presence (never the actual secret value)
-  // so Cloudflare Pages' function logs reveal whether the service-role key
-  // is actually reaching this request's `process.env`, without leaking it.
-  console.log("DEBUG ENV:", {
-    hasUrl: !!process.env.NEXT_PUBLIC_SUPABASE_URL,
-    hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-  });
-
   // Resolved once, into a local `const`, and passed explicitly into
   // `createServiceClient` below instead of letting that function read
   // `process.env` internally. This fails with a specific, greppable message

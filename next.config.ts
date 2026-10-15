@@ -17,6 +17,28 @@ const nextConfig: NextConfig = {
       allowedOrigins: NGROK_ORIGINS,
     },
   },
+  // [SECURITY] Applied to every route. `X-Frame-Options`/`frame-ancestors`
+  // stop the storefront (and, critically, /admin) from being iframed for
+  // clickjacking; `Referrer-Policy` strips the full URL (including the
+  // order id query param on `/carrito/exito`'s capability link) from the
+  // `Referer` header sent to any third-party resource; `X-Content-Type-Options`
+  // blocks MIME-sniffing; `Permissions-Policy` disables APIs this app never
+  // uses. No `Content-Security-Policy` yet — introducing one retroactively
+  // needs an audit of every inline script/style this app relies on first,
+  // to avoid silently breaking the site.
+  async headers() {
+    return [
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Frame-Options", value: "DENY" },
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+        ],
+      },
+    ];
+  },
   images: {
     remotePatterns: [
       {

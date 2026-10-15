@@ -202,14 +202,12 @@ create policy "profiles_update_own"
   using (auth.uid() = id)
   with check (auth.uid() = id);
 
--- Only admins can change roles (handled at application layer: a separate,
--- more restrictive policy or a dedicated admin-only RPC should guard
--- `role` column changes; a straightforward approach is a trigger that
--- rejects role changes unless the actor is_admin()).
 create policy "profiles_admin_full_access"
   on public.profiles for all
   using (public.is_admin());
 ```
+
+> **Role column protection**: `profiles_update_own`'s `using`/`with check` can only scope WHICH ROW is updated (`auth.uid() = id`) — Postgres RLS has no native column-level grain, so by itself it does NOT stop a user from updating their own `role`. This is closed by an explicit `before update` trigger, `prevent_unauthorized_role_change_trigger` (see `20261015000000_prevent_role_self_escalation.sql`), which rejects any `role` change unless the acting session is already an admin.
 
 ### 5.3 `categories` & `products`
 

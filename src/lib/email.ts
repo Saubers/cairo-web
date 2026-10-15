@@ -27,6 +27,23 @@ function getResendClient(): Resend {
 }
 
 /**
+ * Escapes the five HTML-significant characters before interpolating
+ * user-controlled strings (e.g. `guest_name`, `product_name`) into the raw
+ * HTML templates below. Without this, a crafted name at checkout (e.g.
+ * `<img src=x onerror=...>`) would be injected verbatim into the email body
+ * sent via Resend — most webmail clients sandbox/strip `<script>`, but HTML
+ * injection (broken layout, spoofed links/content) is still a real risk.
+ */
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/**
  * Renders the order confirmation email as plain inline-styled HTML (no
  * `react-email` dependency) so the markup stays self-contained and renders
  * predictably across email clients, which strip `<style>` blocks and
@@ -42,7 +59,7 @@ function renderOrderConfirmationHtml(
       (item) => `
         <tr>
           <td style="padding: 12px 0; border-bottom: 1px solid #2f2b2c1a; color: #2f2b2c; font-size: 14px;">
-            ${item.productName} <span style="color: #2f2b2c80;">x${item.quantity}</span>
+            ${escapeHtml(item.productName)} <span style="color: #2f2b2c80;">x${item.quantity}</span>
           </td>
           <td style="padding: 12px 0; border-bottom: 1px solid #2f2b2c1a; color: #2f2b2c; font-size: 14px; text-align: right;">
             ${PRICE_FORMATTER.format(item.subtotal)}
@@ -52,10 +69,10 @@ function renderOrderConfirmationHtml(
     .join("");
 
   // `recipientName` comes from `profiles.full_name` (registered customers)
-  // or `orders.guest_name` (guest checkout) — both optional, so the
-  // greeting degrades gracefully to a generic one when absent.
+  // or `orders.guest_name` (guest checkout) — both user-controlled, so they
+  // must be escaped before interpolation, same as `item.productName` above.
   const greeting = recipientName
-    ? `¡Gracias por tu compra, ${recipientName}!`
+    ? `¡Gracias por tu compra, ${escapeHtml(recipientName)}!`
     : "¡Gracias por tu compra!";
 
   return `
@@ -126,7 +143,10 @@ export async function sendOrderConfirmationEmail(
  * 1. Write a `renderOrderShippedHtml(...)` function, following the exact
  *    pattern of `renderOrderConfirmationHtml` above (inline-styled HTML,
  *    no `react-email` dependency), that renders `trackingNumber` and
- *    `provider` into a branded template.
+ *    `provider` into a branded template. Pass both through `escapeHtml`
+ *    before interpolating them, same as `renderOrderConfirmationHtml` does
+ *    for `recipientName`/`productName` — `provider` is admin-entered but
+ *    still free text, so it must not be trusted as pre-sanitized HTML.
  * 2. Replace the `console.log` below with:
  *    ```ts
  *    const resend = getResendClient();

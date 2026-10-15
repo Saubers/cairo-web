@@ -163,6 +163,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       xRequestId: request.headers.get("x-request-id"),
       dataId,
       secret: process.env.MERCADOPAGO_WEBHOOK_SECRET!,
+      // [SECURITY] Rejects a signature whose `ts` is more than 5 minutes old,
+      // narrowing the window in which a captured, still cryptographically
+      // valid notification could be replayed. (The idempotency check below
+      // already no-ops a replay against an order that's already "paid", and
+      // payment status is always re-fetched live from Mercado Pago rather
+      // than trusted from the notification body — this is defense in depth,
+      // not the only safeguard.)
+      toleranceSeconds: 300,
     });
   } catch {
     return NextResponse.json({ error: "Invalid webhook signature." }, { status: 401 });
