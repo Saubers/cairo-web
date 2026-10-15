@@ -1,6 +1,5 @@
 import "server-only";
 import { Resend } from "resend";
-import { ShippingNotificationEmail } from "@/components/emails/ShippingNotificationEmail";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -147,27 +146,97 @@ export async function sendOrderConfirmationEmail(
 // e.g. "Cairo <pedidos@cairo.com.ar>") to send to real customers.
 const SHIPPING_EMAIL_FALLBACK_FROM = "onboarding@resend.dev";
 
+/** Everything the "order shipped" email needs to render, beyond the recipient address. */
+export interface ShippingNotificationDetails {
+  customerName: string | null;
+  orderId: string;
+  shippingProvider: string;
+  trackingNumber: string;
+}
+
 /**
- * Sends the "your order has shipped" notification via Resend, rendering
- * `ShippingNotificationEmail` (a React Email component) to the message body.
+ * Renders the "order shipped" email as plain inline-styled HTML — a template
+ * literal, not a React Email component.
  *
- * Passing `react: <ShippingNotificationEmail .../>` instead of a hand-built
- * `html` string, as `renderOrderConfirmationHtml` above does, means
- * `customerName`/`provider`/`trackingNumber` go through JSX's automatic text
- * escaping rather than needing a manual `escapeHtml` pass — React never
- * interprets string children as markup.
+ * [CLOUDFLARE 1102 FIX] `@react-email/components` previously rendered this
+ * email (see the now-removed `src/components/emails/ShippingNotificationEmail.tsx`).
+ * React Email renders by mounting a full React tree server-side and then
+ * serializing it to static HTML on every single send — on Cloudflare's
+ * Workers runtime, that CPU burst during a Server Action's execution window
+ * was enough to trip `Error 1102: Worker exceeded resource limits`. A plain
+ * template literal has no render pass at all: it is string concatenation,
+ * with the same cost as `renderOrderConfirmationHtml` above (which has
+ * never caused this error).
  *
- * [EDGE SAFETY] This function itself never throws — every failure path is
- * caught and logged here instead. On Cloudflare's Workers runtime, a Route
- * Handler / Server Action that returns (or whose promise settles) before an
- * in-flight `fetch` to a third-party API resolves gets that request aborted
- * mid-flight ("Workers runtime cancelled the request") — so the ONE thing
- * that matters for this function is that every await in this call chain is
- * explicit, all the way down to the final `resend.emails.send()`, and that
- * the caller (`updateOrderStatus` in `src/app/admin/orders/actions.ts`)
- * also `await`s this function rather than firing it off and returning
- * immediately. A failed delivery is a logged failure, not an unhandled
- * promise rejection racing against worker shutdown.
+ * `customerName`/`shippingProvider`/`trackingNumber` are escaped before
+ * interpolation for the same reason `renderOrderConfirmationHtml` escapes
+ * `recipientName`/`item.productName`: JSX auto-escaped these previously,
+ * but a plain string template does not, and `shippingProvider`/
+ * `trackingNumber` are admin-entered free text.
+ */
+export function renderShippingNotificationHtml({
+  customerName,
+  orderId,
+  shippingProvider,
+  trackingNumber,
+}: ShippingNotificationDetails): string {
+  const shortOrderId = orderId.slice(0, 8).toUpperCase();
+  const greeting = customerName ? `¡Hola, ${escapeHtml(customerName)}!` : "¡Hola!";
+
+  return `
+    <div style="background-color: #fffcfa; padding: 32px 16px; font-family: 'Helvetica Neue', Arial, sans-serif;">
+      <div style="max-width: 480px; margin: 0 auto; background-color: #ffffff; border-radius: 12px; padding: 32px;">
+        <h1 style="margin: 0 0 8px; color: #5b0015; font-size: 22px;">${greeting}</h1>
+        <p style="margin: 0 0 24px; color: #2f2b2c80; font-size: 14px;">
+          Tu pedido <strong>#${shortOrderId}</strong> ya salió de nuestro depósito y está en camino a tu domicilio.
+        </p>
+
+        <div style="background-color: #bcc8e033; border: 1px solid #bcc8e0; border-radius: 10px; padding: 20px; margin-bottom: 24px;">
+          <p style="margin: 0 0 4px; color: #2f2b2c80; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;">
+            Empresa de envío
+          </p>
+          <p style="margin: 0 0 16px; color: #2f2b2c; font-size: 16px; font-weight: 600;">
+            ${escapeHtml(shippingProvider)}
+          </p>
+
+          <p style="margin: 0 0 4px; color: #2f2b2c80; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;">
+            Número de seguimiento
+          </p>
+          <p style="margin: 0; color: #5b0015; font-size: 18px; font-weight: 700; font-family: 'Courier New', monospace; letter-spacing: 0.03em;">
+            ${escapeHtml(trackingNumber)}
+          </p>
+        </div>
+
+        <p style="margin: 0 0 24px; color: #2f2b2c; font-size: 14px; line-height: 22px;">
+          Gracias por confiar en Cairo Accesorios. Esperamos que disfrutes tu compra tanto como nosotros disfrutamos
+          prepararla para ti.
+        </p>
+
+        <p style="margin: 32px 0 0; padding-top: 16px; border-top: 1px solid #2f2b2c1a; color: #2f2b2c80; font-size: 12px;">
+          Cairo Accesorios — Accesorios para mujer
+        </p>
+      </div>
+    </div>`;
+}
+
+/**
+ * Sends the "your order has shipped" notification.
+ *
+ * [CLOUDFLARE 1102 FIX] Uses a native `fetch` call to Resend's HTTP API
+ * instead of the `resend` SDK (`getResendClient()`, used by
+ * `sendOrderConfirmationEmail` above). The SDK pulls in its own HTTP client
+ * and request/response plumbing; a bare `fetch` with a hand-built JSON body
+ * has effectively zero import/initialization cost, which matters here
+ * because this call runs inside the same Worker invocation as the
+ * `updateOrderStatus` Server Action that triggered it (see that action's
+ * own `[EDGE SAFETY]` comment on why its `await` is mandatory) rather than
+ * in a separate webhook invocation with a full execution budget to itself.
+ *
+ * Never throws: every failure path (network failure, a non-2xx response)
+ * is caught and logged here instead, so a failed notification can never
+ * roll back or block the order-status update that already succeeded in the
+ * caller — the same contract `sendOrderConfirmationEmail` documents for its
+ * own callers.
  */
 export async function sendShippingEmail(
   orderId: string,
@@ -176,34 +245,49 @@ export async function sendShippingEmail(
   provider: string,
   customerName: string | null = null,
 ): Promise<void> {
-  const resend = getResendClient();
   const from = process.env.RESEND_FROM_EMAIL ?? SHIPPING_EMAIL_FALLBACK_FROM;
+  const html = renderShippingNotificationHtml({
+    customerName,
+    orderId,
+    shippingProvider: provider,
+    trackingNumber,
+  });
 
   console.log(`[RESEND] Sending shipping notification for order ${orderId} to ${customerEmail} from "${from}"...`);
 
-  const { data, error } = await resend.emails.send({
-    from,
-    to: customerEmail,
-    subject: `Cairo — Tu pedido #${orderId.slice(0, 8).toUpperCase()} está en camino`,
-    react: (
-      <ShippingNotificationEmail
-        customerName={customerName}
-        orderId={orderId}
-        shippingProvider={provider}
-        trackingNumber={trackingNumber}
-      />
-    ),
-  });
+  try {
+    const response = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
+      },
+      body: JSON.stringify({
+        from,
+        to: customerEmail,
+        subject: `Cairo — Tu pedido #${orderId.slice(0, 8).toUpperCase()} está en camino`,
+        html,
+      }),
+    });
 
-  // Never throw: a notification failure must not roll back or block the
-  // order-status update that already succeeded in the caller. Logging is
-  // the only diagnostic signal available here (visible in Cloudflare
-  // Pages' function logs) — this is the detail needed to tell "Resend
-  // rejected the request" (bad API key, unverified sender, sandbox-mode
-  // recipient restriction, etc.) apart from "the request never completed".
-  if (error) {
-    console.error(`[RESEND ERROR] Failed to send shipping notification for order ${orderId}:`, error);
-  } else {
-    console.log(`[RESEND SUCCESS] Shipping notification sent to ${customerEmail}. Resend id: ${data?.id}`);
+    // Resend's HTTP API returns a JSON body on both success (`{ id }`) and
+    // failure (`{ message, name, ... }`) — read it once, regardless of
+    // status, so a failure's detail is never discarded.
+    const body: unknown = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      console.error(`[RESEND ERROR] Failed to send shipping notification for order ${orderId}:`, body);
+      return;
+    }
+
+    const resendId =
+      typeof body === "object" && body !== null && typeof (body as { id?: unknown }).id === "string"
+        ? (body as { id: string }).id
+        : undefined;
+    console.log(`[RESEND SUCCESS] Shipping notification sent to ${customerEmail}. Resend id: ${resendId}`);
+  } catch (networkError) {
+    // The `fetch` itself failed (e.g. a transient network error reaching
+    // Resend) before any HTTP response was received.
+    console.error(`[RESEND ERROR] Network failure sending shipping notification for order ${orderId}:`, networkError);
   }
 }

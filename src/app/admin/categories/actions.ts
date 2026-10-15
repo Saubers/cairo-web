@@ -43,6 +43,8 @@ export async function createCategory(name: string): Promise<ActionResult> {
   }
 
   revalidatePath("/admin/categories");
+  revalidatePath("/");
+  revalidatePath("/catalogo");
   return {};
 }
 
@@ -65,6 +67,9 @@ export async function updateCategory(id: string, name: string): Promise<ActionRe
   }
 
   revalidatePath("/admin/categories");
+  revalidatePath("/");
+  revalidatePath("/catalogo");
+  revalidatePath("/producto/[id]", "page");
   return {};
 }
 
@@ -83,5 +88,8 @@ export async function deleteCategory(id: string): Promise<ActionResult> {
   }
 
   revalidatePath("/admin/categories");
+  revalidatePath("/");
+  revalidatePath("/catalogo");
+  revalidatePath("/producto/[id]", "page");
   return {};
 }

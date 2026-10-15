@@ -73,6 +73,7 @@ export async function createProduct(input: unknown): Promise<ActionResult> {
     return { error: toSafeErrorMessage(error, "No se pudo crear el producto.") };
   }
 
+  revalidatePath("/");
   revalidatePath("/admin/products");
   revalidatePath("/catalogo");
   return {};
@@ -110,6 +111,7 @@ export async function updateProduct(id: string, input: unknown): Promise<ActionR
     return { error: toSafeErrorMessage(error, "No se pudo actualizar el producto.") };
   }
 
+  revalidatePath("/");
   revalidatePath("/admin/products");
   revalidatePath("/catalogo");
   revalidatePath("/producto/[id]", "page");
@@ -126,6 +128,7 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
     return { error: toSafeErrorMessage(error, "No se pudo eliminar el producto.") };
   }
 
+  revalidatePath("/");
   revalidatePath("/admin/products");
   revalidatePath("/catalogo");
   revalidatePath("/colecciones/[slug]", "page");

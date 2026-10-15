@@ -7,6 +7,13 @@ interface AdminLayoutProps {
   children: ReactNode;
 }
 
+// Applies to every /admin/* page via Next.js route-segment-config
+// inheritance: the admin panel reads live, per-request auth/role state and
+// must never be served from a cached render. Explicit here even though the
+// `auth.getUser()` call below already opts this layout out of static
+// rendering implicitly.
+export const dynamic = "force-dynamic";
+
 // ---------------------------------------------------------------------------
 // ROLE VALIDATION (see docs/context/admin-flow.md for the full rationale).
 //

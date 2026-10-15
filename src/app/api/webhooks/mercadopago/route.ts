@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { MercadoPagoConfig, Payment, WebhookSignatureValidator } from "mercadopago";
 import { createServiceClient } from "@/lib/supabase/service";
 import { sendOrderConfirmationEmail } from "@/lib/email";
@@ -282,6 +283,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       // "paid" — see `decrementStockForOrder`'s docstring for why this must
       // never throw or roll back the status update above.
       await decrementStockForOrder(service, orderId);
+
+      // Purges the public catalog/product-detail cache (see `export const
+      // revalidate = 3600` on those pages) so a stock change from this paid
+      // order — including a product selling out — is reflected immediately
+      // instead of waiting out the 1-hour window. `revalidatePath` is a
+      // synchronous, in-memory cache-tag operation (no network I/O), so it
+      // cannot throw in a way that risks this handler's edge-safety
+      // contract. Mirrors the same calls already made from
+      // `admin/products/actions.ts` on a manual stock edit.
+      revalidatePath("/");
+      revalidatePath("/catalogo");
+      revalidatePath("/producto/[id]", "page");
+      revalidatePath("/colecciones/[slug]", "page");
 
       // A failure sending the confirmation email must never surface as a
       // webhook error — Mercado Pago retries non-2xx responses, which would
