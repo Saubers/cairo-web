@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { toSafeErrorMessage, type ActionResult } from "@/lib/actionResult";
-import { ADMIN_ORDERS_EXPORT_LIMIT, getOrderForAdmin, getOrdersForAdmin } from "@/services/orderService";
+import {
+  ADMIN_ORDERS_EXPORT_LIMIT,
+  getOrderForAdmin,
+  getOrdersForAdmin,
+  resolveOrderRecipient,
+} from "@/services/orderService";
 import { ORDER_STATUS_BADGE } from "@/lib/orderStatus";
 import { sendShippingEmail } from "@/lib/email";
 import type { OrderStatus } from "@/types";
@@ -39,8 +44,22 @@ export async function updateOrderStatus({
   trackingNumber,
   shippingProvider,
 }: UpdateOrderStatusInput): Promise<ActionResult> {
+  console.log("[ADMIN ACTION] Actualizando orden a:", status, { orderId, trackingNumber, shippingProvider });
+
   const supabase = await createClient();
 
+  // [AUDIT] `status` is typed as the `OrderStatus` union
+  // ("pending" | "in_process" | "paid" | "shipped" | "rejected" | "cancelled"),
+  // not a free-form string — TypeScript rejects any other value at compile
+  // time. `OrderStatusForm`'s <select> always submits `option.value` (the
+  // lowercase literal), never the Spanish label shown to the admin
+  // ("Enviado"), and the `orders_status_check` constraint
+  // (20261014120000_add_order_shipping_fields.sql) stores the same
+  // lowercase literal in Postgres. There is no case-mismatch here — a
+  // `.toLowerCase() === "enviado"` check would in fact never match, since
+  // "enviado" is never the value in play on either side of this
+  // comparison. Case sensitivity was ruled out as the cause of the missing
+  // email; see `resolveOrderRecipient` below for the actual bug.
   const updatePayload: Record<string, unknown> = { status };
   if (status === "shipped") {
     updatePayload.tracking_number = trackingNumber;
@@ -68,19 +87,47 @@ export async function updateOrderStatus({
   // network call to Resend's API is still in flight, silently cancelling
   // it before the email is ever sent. `sendShippingEmail` itself never
   // throws (it logs its own failures), so this `try/catch` only guards
-  // `getOrderForAdmin` above it.
+  // `getOrderForAdmin`/`resolveOrderRecipient` above it.
   if (status === "shipped" && trackingNumber && shippingProvider) {
+    console.log("[ADMIN ACTION] Condición de envío cumplida. Intentando enviar mail...");
+
     try {
       const result = await getOrderForAdmin(orderId);
-      if (result?.order.guestEmail) {
-        await sendShippingEmail(
-          orderId,
-          result.order.guestEmail,
-          trackingNumber,
-          shippingProvider,
-          result.order.guestName,
-        );
+
+      if (!result) {
+        console.error(`[ADMIN ACTION] Order ${orderId} not found after update — cannot resolve recipient.`);
+        return {};
       }
+
+      // [ROOT CAUSE] The previous version of this code checked
+      // `result.order.guestEmail` directly — that column is `null` for
+      // every REGISTERED customer's order (it is only ever populated at
+      // guest checkout), so for any logged-in buyer this condition was
+      // always false and `sendShippingEmail` was never called — matching
+      // exactly the reported symptom (no Resend logs at all, because the
+      // call site was never reached). `resolveOrderRecipient` fixes this
+      // by resolving the email from `auth.users` for registered customers,
+      // the same way the Mercado Pago webhook's `resolveOrderRecipient`
+      // does for the order-confirmation email.
+      const recipient = await resolveOrderRecipient(result.order);
+
+      if (!recipient) {
+        console.error(
+          `[ADMIN ACTION] Order ${orderId} has no resolvable recipient (no userId and no guestEmail) — skipping shipping email.`,
+        );
+        return {};
+      }
+
+      console.log(
+        "[ADMIN ACTION] Verificando API Key de Resend existente:",
+        !!process.env.RESEND_API_KEY,
+      );
+      console.log(
+        `[ADMIN ACTION] Recipient resolved via "${recipient.source}" path:`,
+        recipient.email,
+      );
+
+      await sendShippingEmail(orderId, recipient.email, trackingNumber, shippingProvider, recipient.name);
     } catch (emailError) {
       console.error("Failed to send shipping notification email:", emailError);
     }

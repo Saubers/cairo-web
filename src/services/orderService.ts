@@ -248,6 +248,56 @@ async function resolveCustomerEmails(userIds: string[]): Promise<Map<string, str
   return emailById;
 }
 
+/** The resolved recipient for an order's transactional emails, plus which path produced it (for logging). */
+export interface OrderRecipient {
+  email: string;
+  name: string | null;
+  source: "registered" | "guest";
+}
+
+/**
+ * Resolves who should receive an order's transactional emails (shipping
+ * notification, etc.), covering both checkout flows:
+ * - Registered customer (`userId` set): email comes from `auth.users` (via
+ *   the service-role admin API — `profiles` has no email column, same as
+ *   `resolveCustomerEmails` above), display name from `profiles.full_name`.
+ * - Guest checkout (`userId` is null): uses `guestEmail`/`guestName`,
+ *   captured directly on `orders` at checkout time.
+ *
+ * [BUG CONTEXT] `getOrderForAdmin`'s `order.guestEmail` is `null` for every
+ * REGISTERED customer's order (that column is only ever populated for guest
+ * checkouts) — a caller checking `order.guestEmail` directly to decide
+ * whether to send a notification will silently skip every registered
+ * customer's order. This function is the fix: it must be used instead of
+ * reading `order.guestEmail` directly whenever the recipient of an email is
+ * being decided.
+ *
+ * Returns `null` only in the should-never-happen case where neither path
+ * yields an email, so the caller can skip sending without throwing.
+ */
+export async function resolveOrderRecipient(order: Order): Promise<OrderRecipient | null> {
+  if (order.userId) {
+    const service = createServiceClient(process.env.SUPABASE_SERVICE_ROLE_KEY!);
+    const { data: userResult } = await service.auth.admin.getUserById(order.userId);
+    const email = userResult?.user?.email;
+    if (!email) return null;
+
+    const { data: profileRow } = await service
+      .from("profiles")
+      .select("full_name")
+      .eq("id", order.userId)
+      .maybeSingle<{ full_name: string | null }>();
+
+    return { email, name: profileRow?.full_name ?? null, source: "registered" };
+  }
+
+  if (order.guestEmail) {
+    return { email: order.guestEmail, name: order.guestName, source: "guest" };
+  }
+
+  return null;
+}
+
 /**
  * Default cap for the admin "Pedidos" list and its CSV export, so both stay
  * in sync without duplicating the number in every caller.
