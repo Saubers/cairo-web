@@ -23,6 +23,12 @@ interface OrderItemRow {
   subtotal: number;
 }
 
+/** Minimal shape needed to decrement stock — distinct from `OrderItemRow`, which also carries display fields unused here. */
+interface OrderItemStockRow {
+  product_id: string;
+  quantity: number;
+}
+
 interface ProfileRow {
   full_name: string | null;
 }
@@ -86,6 +92,51 @@ async function resolveOrderRecipient(
   }
 
   return null;
+}
+
+/**
+ * Decrements `products.stock` for every line item of a newly-paid order,
+ * via the `decrement_product_stock` Postgres function (see
+ * `supabase/migrations/20261015010000_add_decrement_product_stock_rpc.sql`).
+ *
+ * The RPC does the subtract-and-floor-at-zero atomically in a single
+ * `UPDATE`, so concurrent webhook deliveries for different orders that
+ * happen to share a product never lose a decrement to a read-then-write
+ * race. Items with a null `product_id` (the referenced product was deleted
+ * after the order was placed) are skipped — there is nothing left to
+ * decrement.
+ *
+ * Must never throw: this runs after the order has already been marked
+ * "paid", which must not be rolled back by an inventory bookkeeping
+ * failure. Each failed decrement is logged for manual reconciliation.
+ */
+async function decrementStockForOrder(service: ReturnType<typeof createServiceClient>, orderId: string): Promise<void> {
+  const { data: itemRows, error: itemsError } = await service
+    .from("order_items")
+    .select("product_id, quantity")
+    .eq("order_id", orderId)
+    .returns<OrderItemStockRow[]>();
+
+  if (itemsError) {
+    console.error(`[mercadopago-webhook] Failed to load order_items for stock decrement (order ${orderId}):`, itemsError);
+    return;
+  }
+
+  for (const item of itemRows ?? []) {
+    if (!item.product_id) continue;
+
+    const { error: rpcError } = await service.rpc("decrement_product_stock", {
+      p_product_id: item.product_id,
+      p_quantity: item.quantity,
+    });
+
+    if (rpcError) {
+      console.error(
+        `[mercadopago-webhook] Failed to decrement stock for product ${item.product_id} (order ${orderId}):`,
+        rpcError,
+      );
+    }
+  }
 }
 
 /**
@@ -226,6 +277,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           mp_payment_id: String(paymentResponse.id),
         })
         .eq("id", orderId);
+
+      // Inventory deduction happens right after the order is confirmed
+      // "paid" — see `decrementStockForOrder`'s docstring for why this must
+      // never throw or roll back the status update above.
+      await decrementStockForOrder(service, orderId);
 
       // A failure sending the confirmation email must never surface as a
       // webhook error — Mercado Pago retries non-2xx responses, which would

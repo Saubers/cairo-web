@@ -6,11 +6,18 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Minus, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { useCartStore } from "@/store/useCartStore";
 import { checkoutSchema, type CheckoutFormValues } from "@/lib/validation/checkoutSchema";
 import { GuestCheckoutModal } from "@/components/cart/GuestCheckoutModal";
 import { CartSummary } from "@/components/cart/CartSummary";
 import { Spinner } from "@/components/ui/Spinner";
+import { useProductsStock } from "@/hooks/useProductsStock";
+
+/** Shown when a `fetch()` call itself fails (e.g. offline), before any HTTP response is received. */
+const NETWORK_ERROR_MESSAGE = "Revisá tu conexión a internet e intentá nuevamente.";
+/** Generic fallback when the server's response can't be parsed or doesn't carry a specific `error` message. */
+const GENERIC_CHECKOUT_ERROR_MESSAGE = "No pudimos iniciar el pago. Intentá nuevamente.";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -28,6 +35,15 @@ function isCheckoutSuccessResponse(value: unknown): value is CheckoutSuccessResp
     value !== null &&
     typeof (value as { initPoint?: unknown }).initPoint === "string"
   );
+}
+
+/** Parses JSON without throwing — a malformed body must fall back to `null`, not crash the error-handling path itself. */
+function safeJsonParse(rawText: string): unknown {
+  try {
+    return JSON.parse(rawText);
+  } catch {
+    return null;
+  }
 }
 
 // Shared input styling for the checkout form fields.
@@ -58,6 +74,15 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
   // point would incorrectly flash for a returning visitor who actually has
   // items in a previous session's cart.
   const hasHydrated = useCartStore((state) => state.hasHydrated);
+
+  // Best-effort client-side stock preview — see `useProductsStock`'s
+  // docstring. `/api/checkout` remains the authoritative check; this only
+  // lets the UI warn the user and disable the pay button before submitting.
+  const stockById = useProductsStock(items.map((item) => item.productId));
+  const overStockItems = items.filter(
+    (item) => stockById[item.productId] !== undefined && item.quantity > stockById[item.productId],
+  );
+  const hasStockIssue = overStockItems.length > 0;
 
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [mercadoPagoInitPoint, setMercadoPagoInitPoint] = useState<string | null>(null);
@@ -103,8 +128,14 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
   async function onSubmit(values: CheckoutFormValues): Promise<void> {
     setCheckoutError(null);
 
+    // Split into its own try/catch: a `fetch()` that fails before any
+    // response is received (offline, DNS failure, `ERR_INTERNET_DISCONNECTED`)
+    // throws a `TypeError`, which must never be confused with a successful
+    // HTTP response that merely has a non-2xx status — the two need
+    // completely different messaging.
+    let response: Response;
     try {
-      const response = await fetch("/api/checkout", {
+      response = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -112,37 +143,61 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
           contact: values,
         }),
       });
+    } catch (networkError) {
+      console.error("Checkout network error:", networkError);
+      setCheckoutError(NETWORK_ERROR_MESSAGE);
+      toast.error(NETWORK_ERROR_MESSAGE);
+      return;
+    }
 
+    try {
       // Only parse as JSON if the server actually says it sent JSON. A crash
       // in the Route Handler (e.g. a missing env var, an uncaught exception
       // on the edge runtime) can come back with an empty body or an HTML
       // error page — calling `.json()` on that throws "Unexpected end of
       // JSON input", which is confusing to catch and impossible to show the
-      // user anything useful about. Reading it as text first lets us surface
-      // a real (if generic) message in every case instead.
+      // user anything useful about.
       const contentType = response.headers.get("content-type") ?? "";
       const isJsonResponse = contentType.includes("application/json");
 
-      if (!response.ok || !isJsonResponse) {
-        const rawText = await response.text();
-        console.error("Checkout request failed:", response.status, rawText);
-        throw new Error("No pudimos iniciar el pago. Intentá nuevamente.");
+      // Read the body as text exactly once — a `Response` body stream can
+      // only be consumed a single time, so extracting the error message
+      // must not call both `.json()` and `.text()` on the same response.
+      const rawText = await response.text();
+
+      if (!response.ok) {
+        // Extract the server's specific error (e.g. "Not enough stock for...")
+        // from the JSON body when available, instead of discarding it for a
+        // generic message.
+        const errorBody: unknown = isJsonResponse ? safeJsonParse(rawText) : null;
+        const serverMessage =
+          typeof errorBody === "object" && errorBody !== null && typeof (errorBody as { error?: unknown }).error === "string"
+            ? (errorBody as { error: string }).error
+            : null;
+
+        if (!serverMessage) {
+          console.error("Checkout request failed:", response.status, rawText);
+        }
+
+        throw new Error(serverMessage ?? GENERIC_CHECKOUT_ERROR_MESSAGE);
       }
 
-      const body: unknown = await response.json();
+      if (!isJsonResponse) {
+        console.error("Checkout response was not JSON:", rawText);
+        throw new Error(GENERIC_CHECKOUT_ERROR_MESSAGE);
+      }
+
+      const body: unknown = safeJsonParse(rawText);
 
       if (!isCheckoutSuccessResponse(body)) {
-        const message =
-          typeof body === "object" && body !== null && typeof (body as { error?: unknown }).error === "string"
-            ? (body as { error: string }).error
-            : "No pudimos iniciar el pago. Intentá nuevamente.";
-        throw new Error(message);
+        throw new Error(GENERIC_CHECKOUT_ERROR_MESSAGE);
       }
 
       setMercadoPagoInitPoint(body.initPoint);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "No pudimos iniciar el pago. Intentá nuevamente.";
+      const message = error instanceof Error ? error.message : GENERIC_CHECKOUT_ERROR_MESSAGE;
       setCheckoutError(message);
+      toast.error(message);
     }
   }
 
@@ -192,6 +247,14 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
                 <p className="text-sm font-medium text-cairo-text">{item.name}</p>
                 <p className="mt-1 text-sm text-cairo-text/60">{PRICE_FORMATTER.format(item.price)}</p>
 
+                {stockById[item.productId] !== undefined && item.quantity > stockById[item.productId] && (
+                  <p className="mt-1 text-xs font-medium text-red-600">
+                    {stockById[item.productId] > 0
+                      ? `Solo quedan ${stockById[item.productId]} unidades disponibles.`
+                      : "Sin stock disponible."}
+                  </p>
+                )}
+
                 <div className="mt-2 flex items-center gap-3">
                   <button
                     type="button"
@@ -206,7 +269,8 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
                     type="button"
                     aria-label="Increase quantity"
                     onClick={() => updateQuantity(item.productId, item.quantity + 1)}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border border-cairo-text/20 text-cairo-text transition-colors hover:border-cairo-primary hover:text-cairo-primary"
+                    disabled={stockById[item.productId] !== undefined && item.quantity >= stockById[item.productId]}
+                    className="flex h-7 w-7 items-center justify-center rounded-full border border-cairo-text/20 text-cairo-text transition-colors hover:border-cairo-primary hover:text-cairo-primary disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <Plus className="h-3.5 w-3.5" />
                   </button>
@@ -345,13 +409,19 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
               </div>
 
               <CartSummary subtotal={subtotal}>
+                {hasStockIssue && (
+                  <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+                    Revisá las cantidades marcadas arriba: superan el stock disponible.
+                  </p>
+                )}
+
                 {checkoutError && (
                   <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{checkoutError}</p>
                 )}
 
                 <button
                   type="submit"
-                  disabled={isSubmitting || mercadoPagoInitPoint !== null}
+                  disabled={isSubmitting || mercadoPagoInitPoint !== null || hasStockIssue}
                   className="flex w-full items-center justify-center gap-2 rounded-md bg-cairo-primary px-4 py-2 text-sm font-medium text-cairo-bg transition-opacity hover:opacity-90 disabled:opacity-50"
                 >
                   {isSubmitting || mercadoPagoInitPoint ? (
@@ -370,10 +440,17 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
             // CTA that opens `GuestCheckoutModal` instead of the contact/
             // shipping form directly.
             <CartSummary subtotal={subtotal}>
+              {hasStockIssue && (
+                <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+                  Revisá las cantidades marcadas arriba: superan el stock disponible.
+                </p>
+              )}
+
               <button
                 type="button"
                 onClick={handleProceedClick}
-                className="w-full rounded-md bg-cairo-primary px-4 py-2 text-sm font-medium text-cairo-bg transition-opacity hover:opacity-90"
+                disabled={hasStockIssue}
+                className="w-full rounded-md bg-cairo-primary px-4 py-2 text-sm font-medium text-cairo-bg transition-opacity hover:opacity-90 disabled:opacity-50"
               >
                 Proceder al Pago
               </button>

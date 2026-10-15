@@ -294,6 +294,30 @@ create trigger enforce_max_two_admins_trigger
   for each row execute function public.enforce_max_two_admins();
 ```
 
+### 5.6 RPC: `decrement_product_stock`
+
+Called by the Mercado Pago webhook (`/api/webhooks/mercadopago/route.ts`) right after an order is marked `"paid"`, once per `order_items` row, to deduct the purchased `quantity` from `products.stock`. Implemented as a single atomic `UPDATE` (not a JS read-then-write) so concurrent webhook deliveries touching the same product never lose a decrement to a race condition; floors at zero instead of allowing negative stock.
+
+```sql
+create or replace function public.decrement_product_stock(p_product_id uuid, p_quantity integer)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.products
+  set stock = greatest(0, stock - p_quantity)
+  where id = p_product_id;
+end;
+$$;
+
+revoke all on function public.decrement_product_stock(uuid, integer) from public, anon, authenticated;
+grant execute on function public.decrement_product_stock(uuid, integer) to service_role;
+```
+
+> **Why `service_role`-only?** The function has no caller-side authorization check of its own (it trusts its input completely) — the webhook's service-role client is the only trusted caller. Granting `execute` to `anon`/`authenticated` would let any client silently drain a product's stock.
+
 ## 6. Storage Policies (`product-media` bucket)
 
 ```sql

@@ -16,8 +16,11 @@ interface AddToCartButtonProps {
  */
 export function AddToCartButton({ product }: AddToCartButtonProps) {
   const addItem = useCartStore((state) => state.addItem);
+  const outOfStock = product.stock <= 0;
 
   function handleAddToCart(): void {
+    if (outOfStock) return;
+
     addItem({
       productId: product.id,
       name: product.name,
@@ -32,9 +35,10 @@ export function AddToCartButton({ product }: AddToCartButtonProps) {
   return (
     <button
       type="button"
-      aria-label={`Add ${product.name} to cart`}
+      aria-label={outOfStock ? `${product.name} is out of stock` : `Add ${product.name} to cart`}
       onClick={handleAddToCart}
-      className="flex h-11 w-11 items-center justify-center rounded-full bg-cairo-primary text-cairo-bg shadow-md transition-transform hover:scale-105"
+      disabled={outOfStock}
+      className="flex h-11 w-11 items-center justify-center rounded-full bg-cairo-primary text-cairo-bg shadow-md transition-transform hover:scale-105 disabled:cursor-not-allowed disabled:bg-cairo-text/30 disabled:hover:scale-100"
     >
       <ShoppingBag className="h-4 w-4" />
     </button>
