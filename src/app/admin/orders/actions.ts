@@ -62,7 +62,13 @@ export async function updateOrderStatus({
     try {
       const result = await getOrderForAdmin(orderId);
       if (result?.order.guestEmail) {
-        await sendShippingEmail(orderId, result.order.guestEmail, trackingNumber, shippingProvider);
+        await sendShippingEmail(
+          orderId,
+          result.order.guestEmail,
+          trackingNumber,
+          shippingProvider,
+          result.order.guestName,
+        );
       }
     } catch (emailError) {
       console.error("Failed to send shipping notification email:", emailError);

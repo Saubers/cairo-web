@@ -1,5 +1,6 @@
 import "server-only";
 import { Resend } from "resend";
+import { ShippingNotificationEmail } from "@/components/emails/ShippingNotificationEmail";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -134,44 +135,53 @@ export async function sendOrderConfirmationEmail(
   }
 }
 
+// [TEMPORARY] Resend requires sending from a domain you've verified before
+// using your own address. `onboarding@resend.dev` is Resend's own sandbox
+// sender, usable with no domain setup — swap this for a verified
+// `pedidos@caccesorios.com`-style address (ideally promoted to its own
+// `RESEND_FROM_EMAIL`-style env var, mirroring `sendOrderConfirmationEmail`
+// below) once the user has verified a domain in the Resend dashboard.
+const SHIPPING_EMAIL_FROM = "onboarding@resend.dev";
+
 /**
- * [STUB] Notifies a customer that their order has shipped.
+ * Sends the "your order has shipped" notification via Resend, rendering
+ * `ShippingNotificationEmail` (a React Email component) to the message body.
  *
- * This is intentionally a no-op placeholder (just a `console.log`) rather
- * than a real Resend call. To wire it up for real:
+ * Passing `react: <ShippingNotificationEmail .../>` instead of a hand-built
+ * `html` string, as `renderOrderConfirmationHtml` above does, means
+ * `customerName`/`provider`/`trackingNumber` go through JSX's automatic text
+ * escaping rather than needing a manual `escapeHtml` pass — React never
+ * interprets string children as markup.
  *
- * 1. Write a `renderOrderShippedHtml(...)` function, following the exact
- *    pattern of `renderOrderConfirmationHtml` above (inline-styled HTML,
- *    no `react-email` dependency), that renders `trackingNumber` and
- *    `provider` into a branded template. Pass both through `escapeHtml`
- *    before interpolating them, same as `renderOrderConfirmationHtml` does
- *    for `recipientName`/`productName` — `provider` is admin-entered but
- *    still free text, so it must not be trusted as pre-sanitized HTML.
- * 2. Replace the `console.log` below with:
- *    ```ts
- *    const resend = getResendClient();
- *    const { error } = await resend.emails.send({
- *      from: process.env.RESEND_FROM_EMAIL!,
- *      to: customerEmail,
- *      subject: `Cairo — Tu pedido #${orderId.slice(0, 8)} está en camino`,
- *      html: renderOrderShippedHtml(trackingNumber, provider),
- *    });
- *    if (error) {
- *      throw new Error(`Failed to send shipping notification email: ${error.message}`);
- *    }
- *    ```
- *
- * Callers must wrap this in a `try/catch`, same as `sendOrderConfirmationEmail`
- * — a failed notification must never roll back or block the admin's status
- * update that triggered it.
+ * Callers (the admin `updateOrderStatus` Server Action) must wrap this in a
+ * `try/catch`: a failed notification must never roll back or block the
+ * order-status update that already succeeded, the same contract as
+ * `sendOrderConfirmationEmail`.
  */
 export async function sendShippingEmail(
   orderId: string,
   customerEmail: string,
   trackingNumber: string,
   provider: string,
+  customerName: string | null = null,
 ): Promise<void> {
-  console.log(
-    `[STUB] sendShippingEmail: would notify ${customerEmail} that order ${orderId} shipped via ${provider} (tracking: ${trackingNumber}).`,
-  );
+  const resend = getResendClient();
+
+  const { error } = await resend.emails.send({
+    from: SHIPPING_EMAIL_FROM,
+    to: customerEmail,
+    subject: `Cairo — Tu pedido #${orderId.slice(0, 8).toUpperCase()} está en camino`,
+    react: (
+      <ShippingNotificationEmail
+        customerName={customerName}
+        orderId={orderId}
+        shippingProvider={provider}
+        trackingNumber={trackingNumber}
+      />
+    ),
+  });
+
+  if (error) {
+    throw new Error(`Failed to send shipping notification email: ${error.message}`);
+  }
 }
