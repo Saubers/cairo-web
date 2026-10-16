@@ -12,10 +12,20 @@ interface CartState {
   // the persisted value a moment after mount.
   hasHydrated: boolean;
   addItem: (item: CartItem) => void;
-  removeItem: (productId: string) => void;
-  updateQuantity: (productId: string, quantity: number) => void;
+  removeItem: (productId: string, variantId: string | null) => void;
+  updateQuantity: (productId: string, variantId: string | null, quantity: number) => void;
   clearCart: () => void;
   setHasHydrated: (value: boolean) => void;
+}
+
+/**
+ * Two cart lines are the "same" line only if both the product AND the
+ * selected color variant match — a variant-less product uses `variantId:
+ * null` for both sides, so this still collapses correctly when there are no
+ * variants (identical to the pre-variants `productId`-only behavior).
+ */
+function isSameCartLine(a: CartItem, productId: string, variantId: string | null): boolean {
+  return a.productId === productId && a.variantId === variantId;
 }
 
 /**
@@ -32,12 +42,12 @@ export const useCartStore = create<CartState>()(
       hasHydrated: false,
       addItem: (item) =>
         set((state) => {
-          const existingItem = state.items.find((i) => i.productId === item.productId);
+          const existingItem = state.items.find((i) => isSameCartLine(i, item.productId, item.variantId));
 
           if (existingItem) {
             return {
               items: state.items.map((i) =>
-                i.productId === item.productId
+                isSameCartLine(i, item.productId, item.variantId)
                   ? { ...i, quantity: i.quantity + item.quantity }
                   : i,
               ),
@@ -46,14 +56,14 @@ export const useCartStore = create<CartState>()(
 
           return { items: [...state.items, item] };
         }),
-      removeItem: (productId) =>
+      removeItem: (productId, variantId) =>
         set((state) => ({
-          items: state.items.filter((i) => i.productId !== productId),
+          items: state.items.filter((i) => !isSameCartLine(i, productId, variantId)),
         })),
-      updateQuantity: (productId, quantity) =>
+      updateQuantity: (productId, variantId, quantity) =>
         set((state) => ({
           items: state.items.map((i) =>
-            i.productId === productId ? { ...i, quantity } : i,
+            isSameCartLine(i, productId, variantId) ? { ...i, quantity } : i,
           ),
         })),
       clearCart: () => set({ items: [] }),

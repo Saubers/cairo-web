@@ -4,11 +4,7 @@ import { useState } from "react";
 import { Minus, Plus, ShoppingBag } from "lucide-react";
 import { useCartStore } from "@/store/useCartStore";
 import { calculateDiscountedPrice } from "@/lib/utils";
-import type { Product } from "@/types";
-
-interface ProductQuantityAddToCartProps {
-  product: Product;
-}
+import { useProductVariant } from "@/components/storefront/ProductVariantProvider";
 
 /** Feedback message shown briefly on the "add to cart" button after a click. */
 const ADDED_FEEDBACK_MS = 2000;
@@ -17,31 +13,60 @@ const ADDED_FEEDBACK_MS = 2000;
  * Quantity stepper + "add to cart" action for the product detail page.
  * Isolated as a Client Component (connects to `useCartStore`) so the
  * detail page itself stays a Server Component.
+ *
+ * Reads the product and currently selected color from `ProductVariantProvider`
+ * (shared with `ProductColorSwatches`/`ProductGallerySection`) instead of
+ * taking them as direct props, since the selected color can change after
+ * this component first renders. For a product with no variants,
+ * `selectedVariant` is always `null` and every calculation below falls back
+ * to the product's own top-level `stock`/`price`/`imageUrls` — identical to
+ * this component's pre-variants behavior.
  */
-export function ProductQuantityAddToCart({ product }: ProductQuantityAddToCartProps) {
+export function ProductQuantityAddToCart() {
+  const { product, selectedVariant } = useProductVariant();
   const addItem = useCartStore((state) => state.addItem);
   const [quantity, setQuantity] = useState(1);
   const [justAdded, setJustAdded] = useState(false);
 
-  const outOfStock = product.stock <= 0;
+  const hasVariants = product.variants.length > 0;
+  // A variant-carrying product with no color selected yet (should not
+  // normally happen — the PDP always resolves a default) is treated as
+  // out of stock rather than silently falling back to the parent's stock,
+  // since that stock is not what would actually be decremented at checkout.
+  const availableStock = hasVariants ? selectedVariant?.stock ?? 0 : product.stock;
+  const outOfStock = availableStock <= 0;
+
+  // Resets the quantity stepper whenever the selected color changes — a
+  // quantity valid for one color's stock may exceed another's. Adjusted
+  // directly during render (React's recommended pattern for resetting state
+  // in response to a prop/context change) rather than in a `useEffect`, to
+  // avoid an extra cascading render.
+  const [lastSeenVariantId, setLastSeenVariantId] = useState(selectedVariant?.id ?? null);
+
+  if ((selectedVariant?.id ?? null) !== lastSeenVariantId) {
+    setLastSeenVariantId(selectedVariant?.id ?? null);
+    setQuantity(1);
+  }
 
   function handleDecrease(): void {
     setQuantity((prev) => Math.max(1, prev - 1));
   }
 
   function handleIncrease(): void {
-    setQuantity((prev) => Math.min(product.stock, prev + 1));
+    setQuantity((prev) => Math.min(availableStock, prev + 1));
   }
 
   function handleAddToCart(): void {
     addItem({
       productId: product.id,
+      variantId: hasVariants ? selectedVariant?.id ?? null : null,
+      colorName: hasVariants ? selectedVariant?.colorName ?? null : null,
       name: product.name,
       // Store the discounted price (a client-side preview only — the
       // checkout route is the authoritative source of truth for totals).
       price: calculateDiscountedPrice(product.price, product.discountPercentage, product.isDiscountActive),
       quantity,
-      imageUrl: product.imageUrls[0] ?? null,
+      imageUrl: (hasVariants ? selectedVariant?.imageUrl : product.imageUrls[0]) ?? null,
     });
 
     setJustAdded(true);
@@ -67,7 +92,7 @@ export function ProductQuantityAddToCart({ product }: ProductQuantityAddToCartPr
             type="button"
             aria-label="Increase quantity"
             onClick={handleIncrease}
-            disabled={outOfStock || quantity >= product.stock}
+            disabled={outOfStock || quantity >= availableStock}
             className="text-cairo-text transition-colors hover:text-cairo-primary disabled:opacity-40"
           >
             <Plus className="h-4 w-4" />

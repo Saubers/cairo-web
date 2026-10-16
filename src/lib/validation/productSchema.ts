@@ -1,6 +1,27 @@
 import { z } from "zod";
 
 /**
+ * A single color variant row submitted from the admin `ProductForm`.
+ * Mirrors the `product_variants` table (minus `id`/`productId`/timestamps,
+ * which the Server Action/DB assign). `colorHex` is optional free-form
+ * input, so it's validated loosely (a leading "#" plus 3/6/8 hex digits)
+ * rather than tied to a specific color-picker widget's output format.
+ */
+const productVariantSchema = z.object({
+  colorName: z.string().trim().min(1, "El nombre del color es obligatorio."),
+  colorHex: z
+    .string()
+    .trim()
+    .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "El color debe ser un código hexadecimal válido.")
+    .nullable(),
+  imageUrl: z.string().url("La imagen del color debe ser una URL válida."),
+  stock: z
+    .number()
+    .int("El stock debe ser un número entero.")
+    .min(0, "El stock no puede ser negativo."),
+});
+
+/**
  * Server-side validation for the admin product create/update Server
  * Actions. The admin `ProductForm` already constrains these fields
  * client-side (e.g. `min`/`max` on number inputs), but that is a UX
@@ -36,6 +57,17 @@ export const productSchema = z.object({
     .max(100, "El descuento no puede ser mayor a 100%.")
     .nullable(),
   isDiscountActive: z.boolean(),
+  // Optional: a product with an empty array keeps behaving exactly like
+  // today (single color/stock/images). `unique(product_id, color_name)` is
+  // also enforced at the DB level; this check surfaces the same mistake as
+  // a friendly message before it ever reaches Postgres.
+  variants: z
+    .array(productVariantSchema)
+    .refine(
+      (variants) => new Set(variants.map((variant) => variant.colorName.toLowerCase())).size === variants.length,
+      { message: "No puede haber dos colores con el mismo nombre." },
+    ),
 });
 
 export type ProductFormValues = z.infer<typeof productSchema>;
+export type ProductVariantFormValues = z.infer<typeof productVariantSchema>;

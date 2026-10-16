@@ -3,13 +3,31 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
-import { Loader2, X } from "lucide-react";
+import { Loader2, Plus, X } from "lucide-react";
 import { toast } from "sonner";
 import type { Category, Collection, Product } from "@/types";
 import { createProduct, updateProduct, type ProductFormInput } from "@/app/admin/products/actions";
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/admin/ui/Card";
 import { ImageDropzone } from "@/components/admin/ui/ImageDropzone";
+
+/**
+ * A single color-variant row being edited in the form. `localId` is a
+ * client-only React key (not persisted — the DB assigns its own `id` on
+ * insert), so rows stay stable across add/remove even before a product has
+ * ever been saved.
+ */
+interface VariantRow {
+  localId: string;
+  colorName: string;
+  colorHex: string;
+  imageUrl: string;
+  stock: string;
+}
+
+function emptyVariantRow(): VariantRow {
+  return { localId: crypto.randomUUID(), colorName: "", colorHex: "", imageUrl: "", stock: "0" };
+}
 
 interface ProductFormProps {
   categories: Category[];
@@ -65,6 +83,17 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
       : "",
   );
   const [isDiscountActive, setIsDiscountActive] = useState(product?.isDiscountActive ?? false);
+  const [variants, setVariants] = useState<VariantRow[]>(
+    (product?.variants ?? []).map((variant) => ({
+      localId: variant.id,
+      colorName: variant.colorName,
+      colorHex: variant.colorHex ?? "",
+      imageUrl: variant.imageUrl,
+      stock: String(variant.stock),
+    })),
+  );
+  /** Tracks which variant row (by `localId`) currently has an image upload in flight. */
+  const [uploadingVariantId, setUploadingVariantId] = useState<string | null>(null);
 
   const [isUploading, setIsUploading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -110,6 +139,54 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
     setImageUrls((current) => current.filter((url) => url !== urlToRemove));
   }
 
+  function handleAddVariant(): void {
+    setVariants((current) => [...current, emptyVariantRow()]);
+  }
+
+  function handleRemoveVariant(localId: string): void {
+    setVariants((current) => current.filter((variant) => variant.localId !== localId));
+  }
+
+  function handleVariantFieldChange(
+    localId: string,
+    field: "colorName" | "colorHex" | "stock" | "imageUrl",
+    value: string,
+  ): void {
+    setVariants((current) =>
+      current.map((variant) => (variant.localId === localId ? { ...variant, [field]: value } : variant)),
+    );
+  }
+
+  /** Uploads a single variant's color photo to the shared `product-media` bucket, same pattern as `handleImagesSelected`. */
+  async function handleVariantImageSelected(localId: string, files: File[]): Promise<void> {
+    const file = files[0];
+    if (!file) return;
+
+    setUploadingVariantId(localId);
+
+    try {
+      const supabase = createClient();
+      const fileExt = file.name.split(".").pop();
+      const fileName = `${crypto.randomUUID()}.${fileExt}`;
+
+      const { error } = await supabase.storage.from("product-media").upload(fileName, file);
+
+      if (error) {
+        throw new Error(`Failed to upload image: ${error.message}`);
+      }
+
+      const { data } = supabase.storage.from("product-media").getPublicUrl(fileName);
+
+      setVariants((current) =>
+        current.map((variant) => (variant.localId === localId ? { ...variant, imageUrl: data.publicUrl } : variant)),
+      );
+    } catch (uploadError) {
+      toast.error(uploadError instanceof Error ? uploadError.message : "Unexpected error.");
+    } finally {
+      setUploadingVariantId(null);
+    }
+  }
+
   function handleDiscountPercentageChange(value: string): void {
     // Clamp to [0, 100] as the user types, in addition to the input's own
     // `min`/`max` attributes (which browsers don't enforce on every input method).
@@ -126,6 +203,17 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
     event.preventDefault();
+
+    // Every variant row needs at least a color name and an uploaded image
+    // before it's a valid variant — caught here (not just by the server
+    // schema) so the admin gets immediate, specific feedback about which
+    // row is incomplete instead of a generic validation error after submit.
+    const incompleteVariant = variants.find((variant) => !variant.colorName.trim() || !variant.imageUrl);
+    if (incompleteVariant) {
+      toast.error("Cada color necesita un nombre y una foto antes de guardar.");
+      return;
+    }
+
     setIsSubmitting(true);
 
     const input: ProductFormInput = {
@@ -141,6 +229,12 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
       isActive,
       discountPercentage: discountPercentage === "" ? null : Number(discountPercentage),
       isDiscountActive,
+      variants: variants.map((variant) => ({
+        colorName: variant.colorName.trim(),
+        colorHex: variant.colorHex.trim() || null,
+        imageUrl: variant.imageUrl,
+        stock: Number(variant.stock),
+      })),
     };
 
     const result = isEditing
@@ -211,7 +305,7 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
 
             <div>
               <label htmlFor="color" className={LABEL_CLASS}>
-                Color
+                Color (usado solo si no agregás colores/variantes abajo)
               </label>
               <input
                 id="color"
@@ -249,6 +343,117 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
             )}
 
             <ImageDropzone multiple isUploading={isUploading} onFilesSelected={handleImagesSelected} />
+          </div>
+        </Card>
+
+        <Card
+          title="Colores (opcional)"
+          description="Agregá variantes de color, cada una con su propia foto y stock. Si no agregás ninguna, el producto usa el Color y Stock de arriba."
+        >
+          <div className="space-y-5 px-6 py-5">
+            {variants.map((variant) => (
+              <div
+                key={variant.localId}
+                className="flex flex-col gap-4 rounded-md border border-cairo-text/10 p-4 sm:flex-row"
+              >
+                <div className="w-full shrink-0 sm:w-40">
+                  {variant.imageUrl ? (
+                    <div className="relative h-24 w-24 overflow-hidden rounded-md border border-cairo-text/10">
+                      <Image src={variant.imageUrl} alt="" fill className="object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => handleVariantFieldChange(variant.localId, "imageUrl", "")}
+                        aria-label="Quitar imagen"
+                        className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <ImageDropzone
+                      isUploading={uploadingVariantId === variant.localId}
+                      onFilesSelected={(files) => handleVariantImageSelected(variant.localId, files)}
+                      label="Foto del color"
+                    />
+                  )}
+                </div>
+
+                <div className="flex flex-1 flex-col gap-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={LABEL_CLASS}>Nombre del color</label>
+                      <input
+                        type="text"
+                        required
+                        value={variant.colorName}
+                        onChange={(event) =>
+                          handleVariantFieldChange(variant.localId, "colorName", event.target.value)
+                        }
+                        placeholder="negro, rojo, beige..."
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div>
+                      <label className={LABEL_CLASS}>Código hex (opcional)</label>
+                      <div className="mt-1 flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={/^#([0-9a-fA-F]{6})$/.test(variant.colorHex) ? variant.colorHex : "#000000"}
+                          onChange={(event) =>
+                            handleVariantFieldChange(variant.localId, "colorHex", event.target.value)
+                          }
+                          className="h-9 w-9 shrink-0 rounded border border-cairo-text/20"
+                        />
+                        <input
+                          type="text"
+                          value={variant.colorHex}
+                          onChange={(event) =>
+                            handleVariantFieldChange(variant.localId, "colorHex", event.target.value)
+                          }
+                          placeholder="#1a1a1a"
+                          className={`${INPUT_CLASS} mt-0`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={LABEL_CLASS}>Stock de este color</label>
+                      <input
+                        type="number"
+                        min={0}
+                        required
+                        value={variant.stock}
+                        onChange={(event) => handleVariantFieldChange(variant.localId, "stock", event.target.value)}
+                        className={INPUT_CLASS}
+                      />
+                    </div>
+
+                    <div className="flex items-end justify-end">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveVariant(variant.localId)}
+                        className="flex items-center gap-1.5 rounded-md border border-cairo-text/20 px-3 py-2 text-sm font-medium text-cairo-text/70 hover:border-red-300 hover:text-red-600"
+                      >
+                        <X className="h-4 w-4" />
+                        Quitar color
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            <button
+              type="button"
+              onClick={handleAddVariant}
+              className="flex items-center gap-2 rounded-md border border-dashed border-cairo-text/30 px-4 py-2.5 text-sm font-medium text-cairo-text/70 transition-colors hover:border-cairo-primary hover:text-cairo-primary"
+            >
+              <Plus className="h-4 w-4" />
+              Agregar color
+            </button>
           </div>
         </Card>
       </div>

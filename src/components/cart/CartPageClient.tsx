@@ -12,7 +12,7 @@ import { checkoutSchema, type CheckoutFormValues } from "@/lib/validation/checko
 import { GuestCheckoutModal } from "@/components/cart/GuestCheckoutModal";
 import { CartSummary } from "@/components/cart/CartSummary";
 import { Spinner } from "@/components/ui/Spinner";
-import { useProductsStock } from "@/hooks/useProductsStock";
+import { cartLineKey, useProductsStock } from "@/hooks/useProductsStock";
 
 /** Shown when a `fetch()` call itself fails (e.g. offline), before any HTTP response is received. */
 const NETWORK_ERROR_MESSAGE = "Revisá tu conexión a internet e intentá nuevamente.";
@@ -78,10 +78,11 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
   // Best-effort client-side stock preview — see `useProductsStock`'s
   // docstring. `/api/checkout` remains the authoritative check; this only
   // lets the UI warn the user and disable the pay button before submitting.
-  const stockById = useProductsStock(items.map((item) => item.productId));
-  const overStockItems = items.filter(
-    (item) => stockById[item.productId] !== undefined && item.quantity > stockById[item.productId],
-  );
+  const stockByKey = useProductsStock(items.map((item) => ({ productId: item.productId, variantId: item.variantId })));
+  const overStockItems = items.filter((item) => {
+    const key = cartLineKey(item.productId, item.variantId);
+    return stockByKey[key] !== undefined && item.quantity > stockByKey[key];
+  });
   const hasStockIssue = overStockItems.length > 0;
 
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
@@ -139,7 +140,11 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          items: items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+          items: items.map((item) => ({
+            productId: item.productId,
+            variantId: item.variantId,
+            quantity: item.quantity,
+          })),
           contact: values,
         }),
       });
@@ -232,66 +237,74 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
         className="mt-8 grid gap-10 lg:grid-cols-[1fr_320px]"
       >
         <ul className="space-y-6">
-          {items.map((item) => (
-            <li
-              key={item.productId}
-              className="flex items-center gap-4 border-b border-cairo-text/10 pb-6"
-            >
-              <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-md bg-cairo-accent-yellow/40">
-                {item.imageUrl && (
-                  <Image src={item.imageUrl} alt={item.name} fill sizes="80px" className="object-cover" />
-                )}
-              </div>
+          {items.map((item) => {
+            const key = cartLineKey(item.productId, item.variantId);
+            const availableStock = stockByKey[key];
 
-              <div className="flex-1">
-                <p className="text-sm font-medium text-cairo-text">{item.name}</p>
-                <p className="mt-1 text-sm text-cairo-text/60">{PRICE_FORMATTER.format(item.price)}</p>
+            return (
+              <li
+                key={key}
+                className="flex items-center gap-4 border-b border-cairo-text/10 pb-6"
+              >
+                <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-md bg-cairo-accent-yellow/40">
+                  {item.imageUrl && (
+                    <Image src={item.imageUrl} alt={item.name} fill sizes="80px" className="object-cover" />
+                  )}
+                </div>
 
-                {stockById[item.productId] !== undefined && item.quantity > stockById[item.productId] && (
-                  <p className="mt-1 text-xs font-medium text-red-600">
-                    {stockById[item.productId] > 0
-                      ? `Solo quedan ${stockById[item.productId]} unidades disponibles.`
-                      : "Sin stock disponible."}
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-cairo-text">{item.name}</p>
+                  {item.colorName && <p className="mt-0.5 text-xs text-cairo-text/50">{item.colorName}</p>}
+                  <p className="mt-1 text-sm text-cairo-text/60">{PRICE_FORMATTER.format(item.price)}</p>
+
+                  {availableStock !== undefined && item.quantity > availableStock && (
+                    <p className="mt-1 text-xs font-medium text-red-600">
+                      {availableStock > 0
+                        ? `Solo quedan ${availableStock} unidades disponibles.`
+                        : "Sin stock disponible."}
+                    </p>
+                  )}
+
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      type="button"
+                      aria-label="Decrease quantity"
+                      onClick={() =>
+                        updateQuantity(item.productId, item.variantId, Math.max(1, item.quantity - 1))
+                      }
+                      className="flex h-7 w-7 items-center justify-center rounded-full border border-cairo-text/20 text-cairo-text transition-colors hover:border-cairo-primary hover:text-cairo-primary"
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </button>
+                    <span className="w-6 text-center text-sm text-cairo-text">{item.quantity}</span>
+                    <button
+                      type="button"
+                      aria-label="Increase quantity"
+                      onClick={() => updateQuantity(item.productId, item.variantId, item.quantity + 1)}
+                      disabled={availableStock !== undefined && item.quantity >= availableStock}
+                      className="flex h-7 w-7 items-center justify-center rounded-full border border-cairo-text/20 text-cairo-text transition-colors hover:border-cairo-primary hover:text-cairo-primary disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col items-end gap-3">
+                  <p className="text-sm font-medium text-cairo-text">
+                    {PRICE_FORMATTER.format(item.price * item.quantity)}
                   </p>
-                )}
-
-                <div className="mt-2 flex items-center gap-3">
                   <button
                     type="button"
-                    aria-label="Decrease quantity"
-                    onClick={() => updateQuantity(item.productId, Math.max(1, item.quantity - 1))}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border border-cairo-text/20 text-cairo-text transition-colors hover:border-cairo-primary hover:text-cairo-primary"
+                    aria-label="Remove item"
+                    onClick={() => removeItem(item.productId, item.variantId)}
+                    className="text-cairo-text/50 transition-colors hover:text-red-600"
                   >
-                    <Minus className="h-3.5 w-3.5" />
-                  </button>
-                  <span className="w-6 text-center text-sm text-cairo-text">{item.quantity}</span>
-                  <button
-                    type="button"
-                    aria-label="Increase quantity"
-                    onClick={() => updateQuantity(item.productId, item.quantity + 1)}
-                    disabled={stockById[item.productId] !== undefined && item.quantity >= stockById[item.productId]}
-                    className="flex h-7 w-7 items-center justify-center rounded-full border border-cairo-text/20 text-cairo-text transition-colors hover:border-cairo-primary hover:text-cairo-primary disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    <Plus className="h-3.5 w-3.5" />
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
-              </div>
-
-              <div className="flex flex-col items-end gap-3">
-                <p className="text-sm font-medium text-cairo-text">
-                  {PRICE_FORMATTER.format(item.price * item.quantity)}
-                </p>
-                <button
-                  type="button"
-                  aria-label="Remove item"
-                  onClick={() => removeItem(item.productId)}
-                  className="text-cairo-text/50 transition-colors hover:text-red-600"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ul>
 
         <aside className="space-y-6">

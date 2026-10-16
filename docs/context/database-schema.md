@@ -80,7 +80,36 @@ create index idx_products_is_active on public.products (is_active);
 
 **Relationships**: `products.category_id` → `categories.id` (N:1); `products.collection_id` → `collections.id` (N:1, `on delete set null`).
 
-### 3.4 `orders`
+### 3.4 `product_variants`
+
+Optional color variants for a product. Purely additive: a product with zero
+variant rows keeps using its own top-level `color`/`stock`/`image_urls`
+exactly as before; a product WITH variant rows gets a per-color swatch
+selector on the storefront, each with its own image and stock.
+
+```sql
+create table public.product_variants (
+  id uuid primary key default gen_random_uuid(),
+  product_id uuid not null references public.products (id) on delete cascade,
+  color_name text not null,
+  color_hex text,                           -- optional swatch color, e.g. "#1a1a1a"
+  image_url text not null,
+  stock integer not null default 0 check (stock >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (product_id, color_name)
+);
+
+create trigger set_updated_at
+  before update on public.product_variants
+  for each row execute function public.handle_updated_at();
+
+create index idx_product_variants_product_id on public.product_variants (product_id);
+```
+
+**Relationships**: `product_variants.product_id` → `products.id` (N:1, cascade delete with parent product).
+
+### 3.5 `orders`
 
 ```sql
 create table public.orders (
@@ -123,7 +152,7 @@ create index idx_orders_status on public.orders (status);
 
 > **Note**: `mp_payment_id` has a `unique` constraint so the webhook handler can rely on it as an idempotency guard — a duplicate notification attempting to set the same `mp_payment_id` again is a no-op/update, not a duplicate order.
 
-### 3.5 `order_items`
+### 3.6 `order_items`
 
 ```sql
 create table public.order_items (
@@ -134,18 +163,24 @@ create table public.order_items (
   unit_price numeric(12,2) not null check (unit_price >= 0),
   quantity integer not null check (quantity > 0),
   subtotal numeric(12,2) not null check (subtotal >= 0),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Added by 20261016120000_add_product_variants.sql. Nullable: only set
+  -- when the purchased item was a specific color variant.
+  variant_id uuid references public.product_variants (id) on delete set null,
+  color_name text                     -- snapshot of the variant's color at purchase time
 );
 
 create index idx_order_items_order_id on public.order_items (order_id);
 create index idx_order_items_product_id on public.order_items (product_id);
+create index idx_order_items_variant_id on public.order_items (variant_id);
 ```
 
 **Relationships**:
 - `order_items.order_id` → `orders.id` (N:1, cascade delete with parent order).
 - `order_items.product_id` → `products.id` (N:1, nullable so historical orders survive product deletion).
+- `order_items.variant_id` → `product_variants.id` (N:1, nullable, `on delete set null` so historical orders survive variant deletion).
 
-> **Design note**: `product_name` and `unit_price` are **snapshotted** at order time rather than joined live from `products`, so historical orders remain accurate even if a product's name or price changes later.
+> **Design note**: `product_name`, `unit_price`, and (when applicable) `color_name` are **snapshotted** at order time rather than joined live from `products`/`product_variants`, so historical orders remain accurate even if a product's name, price, or variant set changes later.
 
 ## 4. Entity Relationship Summary
 
@@ -160,7 +195,9 @@ profiles ──────────────┐
      │ 1:N
      ▼
 order_items ────────► products ────────► categories
-                         N:1               N:1
+     │                   │ 1:N              N:1
+     │ N:1               ▼
+     └──────────► product_variants
 ```
 
 ## 5. Row Level Security (RLS)
@@ -236,7 +273,31 @@ create policy "products_admin_write"
   with check (public.is_admin());
 ```
 
-### 5.4 `orders` & `order_items`
+### 5.4 `product_variants`
+
+```sql
+alter table public.product_variants enable row level security;
+
+-- Public can read variants of active products (or any variant if admin),
+-- mirroring `products_public_read`.
+create policy "product_variants_public_read"
+  on public.product_variants for select
+  using (
+    public.is_admin()
+    or exists (
+      select 1 from public.products p
+      where p.id = product_variants.product_id and p.is_active = true
+    )
+  );
+
+-- Only admins can create/update/delete variants.
+create policy "product_variants_admin_write"
+  on public.product_variants for all
+  using (public.is_admin())
+  with check (public.is_admin());
+```
+
+### 5.5 `orders` & `order_items`
 
 ```sql
 alter table public.orders enable row level security;
@@ -271,7 +332,7 @@ create policy "orders_admin_write"
 
 > **Why no client-side `insert` policy on `orders`?** Order creation must validate current stock and prices server-side and tie the order to a Mercado Pago preference atomically. Allowing a direct client `insert` would let a malicious client fabricate arbitrary totals. The Node.js layer (service role) is the sole writer for order lifecycle; admins retain full access through `is_admin()` for manual corrections/support.
 
-### 5.5 Optional hard backstop: max 2 admins
+### 5.6 Optional hard backstop: max 2 admins
 
 ```sql
 create or replace function public.enforce_max_two_admins()
@@ -294,7 +355,7 @@ create trigger enforce_max_two_admins_trigger
   for each row execute function public.enforce_max_two_admins();
 ```
 
-### 5.6 RPC: `decrement_product_stock`
+### 5.7 RPC: `decrement_product_stock`
 
 Called by the Mercado Pago webhook (`/api/webhooks/mercadopago/route.ts`) right after an order is marked `"paid"`, once per `order_items` row, to deduct the purchased `quantity` from `products.stock`. Implemented as a single atomic `UPDATE` (not a JS read-then-write) so concurrent webhook deliveries touching the same product never lose a decrement to a race condition; floors at zero instead of allowing negative stock.
 
@@ -317,6 +378,28 @@ grant execute on function public.decrement_product_stock(uuid, integer) to servi
 ```
 
 > **Why `service_role`-only?** The function has no caller-side authorization check of its own (it trusts its input completely) — the webhook's service-role client is the only trusted caller. Granting `execute` to `anon`/`authenticated` would let any client silently drain a product's stock.
+
+### 5.8 RPC: `decrement_variant_stock`
+
+Identical rationale and shape to `decrement_product_stock` above, but scoped to a single `product_variants` row. Called by the webhook, once per `order_items` row that has a non-null `variant_id`, instead of (not in addition to) `decrement_product_stock` for that item.
+
+```sql
+create or replace function public.decrement_variant_stock(p_variant_id uuid, p_quantity integer)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.product_variants
+  set stock = greatest(0, stock - p_quantity)
+  where id = p_variant_id;
+end;
+$$;
+
+revoke all on function public.decrement_variant_stock(uuid, integer) from public, anon, authenticated;
+grant execute on function public.decrement_variant_stock(uuid, integer) to service_role;
+```
 
 ## 6. Storage Policies (`product-media` bucket)
 

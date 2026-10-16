@@ -33,6 +33,8 @@ function getMercadoPagoConfig(): MercadoPagoConfig {
 
 interface CheckoutItemInput {
   productId: string;
+  /** `null` for a product with no color variants, mirroring `CartItem.variantId`. */
+  variantId: string | null;
   quantity: number;
 }
 
@@ -49,6 +51,14 @@ interface ProductPriceRow {
   is_active: boolean;
   discount_percentage: number | null;
   is_discount_active: boolean;
+}
+
+/** Stock/ownership fields re-fetched fresh per variant, mirroring `ProductPriceRow`'s role for the parent product. */
+interface VariantStockRow {
+  id: string;
+  product_id: string;
+  color_name: string;
+  stock: number;
 }
 
 interface StoreSettingsRow {
@@ -73,7 +83,15 @@ function parseCheckoutItem(value: unknown): CheckoutItemInput {
     throw new Error("Each item needs a valid productId and a positive integer quantity.");
   }
 
-  return { productId: record.productId, quantity: record.quantity };
+  if (record.variantId !== null && record.variantId !== undefined && typeof record.variantId !== "string") {
+    throw new Error("Each item's variantId must be a string or null.");
+  }
+
+  return {
+    productId: record.productId,
+    variantId: typeof record.variantId === "string" ? record.variantId : null,
+    quantity: record.quantity,
+  };
 }
 
 /** Validates the raw request body into a well-formed `CheckoutRequestBody`, or throws. */
@@ -171,22 +189,33 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
   const service = createServiceClient(serviceRoleKey);
 
   const productIds = parsed.items.map((item) => item.productId);
+  const variantIds = parsed.items.filter((item) => item.variantId !== null).map((item) => item.variantId as string);
 
-  const [{ data: products, error: productsError }, { data: storeSettings }] = await Promise.all([
-    service
-      .from("products")
-      .select("id, name, price, stock, is_active, discount_percentage, is_discount_active")
-      .in("id", productIds)
-      .returns<ProductPriceRow[]>(),
-    // [CRITICAL] Shipping config is read fresh from `store_settings` here —
-    // never trusted from the client — so an admin's edit on
-    // `/admin/configuracion` takes effect on the very next checkout without
-    // a deploy. Falls back to the hardcoded constants only if the row is
-    // somehow missing.
-    service.from("store_settings").select("free_shipping_threshold, flat_shipping_rate").limit(1).maybeSingle<StoreSettingsRow>(),
-  ]);
+  const [{ data: products, error: productsError }, { data: variants, error: variantsError }, { data: storeSettings }] =
+    await Promise.all([
+      service
+        .from("products")
+        .select("id, name, price, stock, is_active, discount_percentage, is_discount_active")
+        .in("id", productIds)
+        .returns<ProductPriceRow[]>(),
+      // [CRITICAL] Variant stock, like the parent product's, is re-fetched
+      // fresh here rather than trusted from the client's cart snapshot.
+      variantIds.length > 0
+        ? service
+            .from("product_variants")
+            .select("id, product_id, color_name, stock")
+            .in("id", variantIds)
+            .returns<VariantStockRow[]>()
+        : Promise.resolve({ data: [] as VariantStockRow[], error: null }),
+      // [CRITICAL] Shipping config is read fresh from `store_settings` here —
+      // never trusted from the client — so an admin's edit on
+      // `/admin/configuracion` takes effect on the very next checkout without
+      // a deploy. Falls back to the hardcoded constants only if the row is
+      // somehow missing.
+      service.from("store_settings").select("free_shipping_threshold, flat_shipping_rate").limit(1).maybeSingle<StoreSettingsRow>(),
+    ]);
 
-  if (productsError) {
+  if (productsError || variantsError) {
     return NextResponse.json({ error: "Failed to validate cart items." }, { status: 500 });
   }
 
@@ -196,10 +225,13 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
   const flatShippingRate = storeSettings ? Number(storeSettings.flat_shipping_rate) : FLAT_SHIPPING_RATE;
 
   const productById = new Map((products ?? []).map((product) => [product.id, product]));
+  const variantById = new Map((variants ?? []).map((variant) => [variant.id, variant]));
 
   const orderItems: {
     product_id: string;
     product_name: string;
+    variant_id: string | null;
+    color_name: string | null;
     unit_price: number;
     quantity: number;
     subtotal: number;
@@ -215,7 +247,28 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
       );
     }
 
-    if (item.quantity > product.stock) {
+    // When the cart line carries a `variantId`, the variant's own `stock`
+    // (not the parent product's) is the authoritative figure — the parent
+    // product's `stock` is only meaningful for products with no variants.
+    let variant: VariantStockRow | undefined;
+
+    if (item.variantId !== null) {
+      variant = variantById.get(item.variantId);
+
+      if (!variant || variant.product_id !== item.productId) {
+        return NextResponse.json(
+          { error: `The selected color for "${product.name}" is not available.` },
+          { status: 400 },
+        );
+      }
+
+      if (item.quantity > variant.stock) {
+        return NextResponse.json(
+          { error: `Not enough stock for "${product.name}" (${variant.color_name}).` },
+          { status: 400 },
+        );
+      }
+    } else if (item.quantity > product.stock) {
       return NextResponse.json(
         { error: `Not enough stock for "${product.name}".` },
         { status: 400 },
@@ -232,6 +285,8 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
     orderItems.push({
       product_id: product.id,
       product_name: product.name,
+      variant_id: variant?.id ?? null,
+      color_name: variant?.color_name ?? null,
       unit_price: unitPrice,
       quantity: item.quantity,
       subtotal,

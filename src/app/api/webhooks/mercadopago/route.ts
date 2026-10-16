@@ -27,6 +27,7 @@ interface OrderItemRow {
 /** Minimal shape needed to decrement stock — distinct from `OrderItemRow`, which also carries display fields unused here. */
 interface OrderItemStockRow {
   product_id: string;
+  variant_id: string | null;
   quantity: number;
 }
 
@@ -96,16 +97,19 @@ async function resolveOrderRecipient(
 }
 
 /**
- * Decrements `products.stock` for every line item of a newly-paid order,
- * via the `decrement_product_stock` Postgres function (see
- * `supabase/migrations/20261015010000_add_decrement_product_stock_rpc.sql`).
+ * Decrements stock for every line item of a newly-paid order. A line with a
+ * `variant_id` (the buyer picked a color) decrements that variant's own
+ * stock via `decrement_variant_stock`; a line with no variant decrements
+ * the parent product's `stock` via `decrement_product_stock` (see
+ * `supabase/migrations/20261015010000_add_decrement_product_stock_rpc.sql`
+ * and `20261016120000_add_product_variants.sql`).
  *
- * The RPC does the subtract-and-floor-at-zero atomically in a single
+ * Both RPCs do the subtract-and-floor-at-zero atomically in a single
  * `UPDATE`, so concurrent webhook deliveries for different orders that
- * happen to share a product never lose a decrement to a read-then-write
- * race. Items with a null `product_id` (the referenced product was deleted
- * after the order was placed) are skipped — there is nothing left to
- * decrement.
+ * happen to share a product/variant never lose a decrement to a
+ * read-then-write race. Items with a null `product_id` (the referenced
+ * product was deleted after the order was placed) are skipped — there is
+ * nothing left to decrement.
  *
  * Must never throw: this runs after the order has already been marked
  * "paid", which must not be rolled back by an inventory bookkeeping
@@ -114,7 +118,7 @@ async function resolveOrderRecipient(
 async function decrementStockForOrder(service: ReturnType<typeof createServiceClient>, orderId: string): Promise<void> {
   const { data: itemRows, error: itemsError } = await service
     .from("order_items")
-    .select("product_id, quantity")
+    .select("product_id, variant_id, quantity")
     .eq("order_id", orderId)
     .returns<OrderItemStockRow[]>();
 
@@ -126,14 +130,19 @@ async function decrementStockForOrder(service: ReturnType<typeof createServiceCl
   for (const item of itemRows ?? []) {
     if (!item.product_id) continue;
 
-    const { error: rpcError } = await service.rpc("decrement_product_stock", {
-      p_product_id: item.product_id,
-      p_quantity: item.quantity,
-    });
+    const { error: rpcError } = item.variant_id
+      ? await service.rpc("decrement_variant_stock", {
+          p_variant_id: item.variant_id,
+          p_quantity: item.quantity,
+        })
+      : await service.rpc("decrement_product_stock", {
+          p_product_id: item.product_id,
+          p_quantity: item.quantity,
+        });
 
     if (rpcError) {
       console.error(
-        `[mercadopago-webhook] Failed to decrement stock for product ${item.product_id} (order ${orderId}):`,
+        `[mercadopago-webhook] Failed to decrement stock for ${item.variant_id ? `variant ${item.variant_id}` : `product ${item.product_id}`} (order ${orderId}):`,
         rpcError,
       );
     }

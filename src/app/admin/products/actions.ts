@@ -6,6 +6,7 @@ import { toSafeErrorMessage, type ActionResult } from "@/lib/actionResult";
 import { productSchema } from "@/lib/validation/productSchema";
 import { getAllProductsForExport } from "@/services/productService";
 import { getCategories } from "@/services/categoryService";
+import type { ProductVariantFormValues } from "@/lib/validation/productSchema";
 
 /**
  * Input shape accepted by the create/update Server Actions, matching the
@@ -28,6 +29,47 @@ export interface ProductFormInput {
   isActive: boolean;
   discountPercentage: number | null;
   isDiscountActive: boolean;
+  variants: ProductVariantFormValues[];
+}
+
+/**
+ * Replaces every `product_variants` row for `productId` with the given set,
+ * mirroring the "detach everything, then reattach selected" pattern already
+ * used by `admin/collections/actions.ts`. Simpler and just as correct as a
+ * diff-based upsert here, since variants have no identity the client needs
+ * to preserve across edits (the PDP/cart key on the variant's own `id`,
+ * which is only ever read back after this write completes).
+ */
+async function replaceProductVariants(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  productId: string,
+  variants: ProductVariantFormValues[],
+): Promise<{ error: string | null }> {
+  const { error: deleteError } = await supabase.from("product_variants").delete().eq("product_id", productId);
+
+  if (deleteError) {
+    return { error: toSafeErrorMessage(deleteError, "No se pudieron actualizar los colores del producto.") };
+  }
+
+  if (variants.length === 0) {
+    return { error: null };
+  }
+
+  const { error: insertError } = await supabase.from("product_variants").insert(
+    variants.map((variant) => ({
+      product_id: productId,
+      color_name: variant.colorName,
+      color_hex: variant.colorHex,
+      image_url: variant.imageUrl,
+      stock: variant.stock,
+    })),
+  );
+
+  if (insertError) {
+    return { error: toSafeErrorMessage(insertError, "No se pudieron guardar los colores del producto.") };
+  }
+
+  return { error: null };
 }
 
 // -----------------------------------------------------------------------------
@@ -54,23 +96,33 @@ export async function createProduct(input: unknown): Promise<ActionResult> {
   const data = parsed.data;
   const supabase = await createClient();
 
-  const { error } = await supabase.from("products").insert({
-    name: data.name,
-    slug: data.slug,
-    description: data.description || null,
-    price: data.price,
-    stock: data.stock,
-    category_id: data.categoryId,
-    collection_id: data.collectionId,
-    color: data.color || null,
-    image_urls: data.imageUrls,
-    is_active: data.isActive,
-    discount_percentage: data.discountPercentage,
-    is_discount_active: data.isDiscountActive,
-  });
+  const { data: insertedProduct, error } = await supabase
+    .from("products")
+    .insert({
+      name: data.name,
+      slug: data.slug,
+      description: data.description || null,
+      price: data.price,
+      stock: data.stock,
+      category_id: data.categoryId,
+      collection_id: data.collectionId,
+      color: data.color || null,
+      image_urls: data.imageUrls,
+      is_active: data.isActive,
+      discount_percentage: data.discountPercentage,
+      is_discount_active: data.isDiscountActive,
+    })
+    .select("id")
+    .single<{ id: string }>();
 
-  if (error) {
-    return { error: toSafeErrorMessage(error, "No se pudo crear el producto.") };
+  if (error || !insertedProduct) {
+    return { error: error ? toSafeErrorMessage(error, "No se pudo crear el producto.") : "No se pudo crear el producto." };
+  }
+
+  const { error: variantsError } = await replaceProductVariants(supabase, insertedProduct.id, data.variants);
+
+  if (variantsError) {
+    return { error: variantsError };
   }
 
   revalidatePath("/");
@@ -109,6 +161,12 @@ export async function updateProduct(id: string, input: unknown): Promise<ActionR
 
   if (error) {
     return { error: toSafeErrorMessage(error, "No se pudo actualizar el producto.") };
+  }
+
+  const { error: variantsError } = await replaceProductVariants(supabase, id, data.variants);
+
+  if (variantsError) {
+    return { error: variantsError };
   }
 
   revalidatePath("/");

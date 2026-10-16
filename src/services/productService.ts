@@ -1,6 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { endOfDayIso } from "@/lib/utils";
-import type { Product } from "@/types";
+import type { Product, ProductVariant } from "@/types";
 
 /** Sort options for the public catalog grid, driven by the `?sort=` URL search param. */
 export type ProductSortOption = "newest" | "price_asc" | "price_desc";
@@ -92,6 +92,64 @@ interface ProductRow {
 const PRODUCT_COLUMNS =
   "id, name, slug, description, price, stock, category_id, collection_id, color, image_urls, is_active, discount_percentage, is_discount_active, created_at, updated_at";
 
+/** Raw shape returned by Supabase for the `product_variants` table (snake_case columns). */
+interface ProductVariantRow {
+  id: string;
+  product_id: string;
+  color_name: string;
+  color_hex: string | null;
+  image_url: string;
+  stock: number;
+  created_at: string;
+  updated_at: string;
+}
+
+const PRODUCT_VARIANT_COLUMNS = "id, product_id, color_name, color_hex, image_url, stock, created_at, updated_at";
+
+function mapRowToProductVariant(row: ProductVariantRow): ProductVariant {
+  return {
+    id: row.id,
+    productId: row.product_id,
+    colorName: row.color_name,
+    colorHex: row.color_hex,
+    imageUrl: row.image_url,
+    stock: row.stock,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/**
+ * Fetches every color variant for a product, ordered by creation so the
+ * admin form and the PDP's swatch list render in the order they were added.
+ * Governed by `product_variants_public_read` (see
+ * docs/context/database-schema.md §5.4) — never trusted as a security
+ * boundary on its own.
+ */
+async function getProductVariants(productId: string): Promise<ProductVariant[]> {
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select(PRODUCT_VARIANT_COLUMNS)
+    .eq("product_id", productId)
+    .order("created_at", { ascending: true })
+    .returns<ProductVariantRow[]>();
+
+  if (error) {
+    throw new Error(`Failed to fetch variants for product "${productId}": ${error.message}`);
+  }
+
+  return (data ?? []).map(mapRowToProductVariant);
+}
+
+/**
+ * Maps a raw `products` row to the `Product` domain type. `variants` is
+ * always an empty array here — `getProductById` is the only place that also
+ * fetches and attaches real variant rows, since every other caller (catalog
+ * grid, related products, CSV export, collection picker) only needs the
+ * product's own fields, not its variants.
+ */
 function mapRowToProduct(row: ProductRow): Product {
   return {
     id: row.id,
@@ -107,6 +165,7 @@ function mapRowToProduct(row: ProductRow): Product {
     isActive: row.is_active,
     discountPercentage: row.discount_percentage,
     isDiscountActive: row.is_discount_active,
+    variants: [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -269,7 +328,11 @@ export async function getProductById(id: string): Promise<Product | null> {
     throw new Error(`Failed to fetch product "${id}": ${error.message}`);
   }
 
-  return data ? mapRowToProduct(data) : null;
+  if (!data) return null;
+
+  const variants = await getProductVariants(id);
+
+  return { ...mapRowToProduct(data), variants };
 }
 
 /**

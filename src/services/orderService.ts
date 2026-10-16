@@ -57,6 +57,8 @@ interface OrderItemRow {
   order_id: string;
   product_id: string | null;
   product_name: string;
+  variant_id: string | null;
+  color_name: string | null;
   unit_price: number;
   quantity: number;
   subtotal: number;
@@ -70,7 +72,7 @@ const ORDER_COLUMNS =
   "created_at, updated_at";
 
 const ORDER_ITEM_COLUMNS =
-  "id, order_id, product_id, product_name, unit_price, quantity, subtotal, created_at";
+  "id, order_id, product_id, product_name, variant_id, color_name, unit_price, quantity, subtotal, created_at";
 
 function mapRowToOrder(row: OrderRow): Order {
   return {
@@ -103,6 +105,8 @@ function mapRowToOrderItem(row: OrderItemRow): OrderItem {
     orderId: row.order_id,
     productId: row.product_id,
     productName: row.product_name,
+    variantId: row.variant_id,
+    colorName: row.color_name,
     unitPrice: row.unit_price,
     quantity: row.quantity,
     subtotal: row.subtotal,

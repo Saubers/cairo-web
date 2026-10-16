@@ -23,6 +23,11 @@ export function AddToCartButton({ product }: AddToCartButtonProps) {
 
     addItem({
       productId: product.id,
+      // Catalog cards never fetch `variants` (see `mapRowToProduct`), so this
+      // quick-add path has no color to attach — only the PDP's
+      // `ProductQuantityAddToCart` resolves a real `variantId`/`colorName`.
+      variantId: null,
+      colorName: null,
       name: product.name,
       // Store the discounted price (a client-side preview only — the
       // checkout route is the authoritative source of truth for totals).

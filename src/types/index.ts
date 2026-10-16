@@ -50,6 +50,23 @@ export interface Collection {
   updatedAt: string;
 }
 
+/**
+ * Mirrors the `public.product_variants` table. Purely additive to `Product`:
+ * a product with no variants keeps using its own top-level `color`/`stock`/
+ * `imageUrls`; a product with variants exposes one of these per color.
+ */
+export interface ProductVariant {
+  id: string;
+  productId: string;
+  colorName: string;
+  /** Optional swatch color, e.g. "#1a1a1a". */
+  colorHex: string | null;
+  imageUrl: string;
+  stock: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Mirrors the `public.products` table. */
 export interface Product {
   id: string;
@@ -67,6 +84,12 @@ export interface Product {
   discountPercentage: number | null;
   /** Whether `discountPercentage` is currently applied to the product's price. */
   isDiscountActive: boolean;
+  /**
+   * Color variants, fetched alongside the product (not a raw DB column).
+   * Empty array means "no variants" — the storefront falls back to the
+   * product's own `color`/`stock`/`imageUrls` in that case.
+   */
+  variants: ProductVariant[];
   createdAt: string;
   updatedAt: string;
 }
@@ -105,7 +128,8 @@ export interface Order {
 /**
  * Mirrors the `public.order_items` table.
  * `productName` and `unitPrice` are snapshots taken at purchase time and may
- * differ from the current `Product` record.
+ * differ from the current `Product` record. `variantId`/`colorName` are only
+ * set when the purchased item was a specific color variant.
  */
 export interface OrderItem {
   id: string;
@@ -115,15 +139,24 @@ export interface OrderItem {
   unitPrice: number;
   quantity: number;
   subtotal: number;
+  variantId: string | null;
+  colorName: string | null;
   createdAt: string;
 }
 
 /**
  * Client-side cart entry (Zustand store), not a database table.
  * Kept intentionally small/denormalized for fast rendering of the cart UI.
+ *
+ * `variantId`/`colorName` are `null` for a product with no variants. Two
+ * entries sharing the same `productId` but different `variantId` are
+ * distinct line items (different colors of the same product), so cart
+ * identity is the composite of both fields — see `useCartStore`.
  */
 export interface CartItem {
   productId: string;
+  variantId: string | null;
+  colorName: string | null;
   name: string;
   price: number;
   quantity: number;

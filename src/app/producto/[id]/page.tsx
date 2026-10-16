@@ -4,11 +4,14 @@ import { notFound } from "next/navigation";
 import { ChevronRight, CreditCard, RotateCcw, Truck } from "lucide-react";
 import { getProductById, getRelatedProducts } from "@/services/productService";
 import { getCategoryById } from "@/services/categoryService";
-import { ProductGallery } from "@/components/storefront/ProductGallery";
+import { ProductVariantProvider } from "@/components/storefront/ProductVariantProvider";
+import { ProductGallerySection } from "@/components/storefront/ProductGallerySection";
+import { ProductColorSwatches } from "@/components/storefront/ProductColorSwatches";
 import { ProductQuantityAddToCart } from "@/components/storefront/ProductQuantityAddToCart";
 import { ProductCard } from "@/components/storefront/ProductCard";
 import { Accordion, type AccordionItemData } from "@/components/ui/Accordion";
 import { calculateDiscountedPrice } from "@/lib/utils";
+import { readStringParam } from "@/lib/searchParams";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -74,7 +77,7 @@ export async function generateMetadata(
  */
 export default async function ProductDetailPage(props: PageProps<"/producto/[id]">) {
   const { id } = await props.params;
-  const product = await getProductById(id);
+  const [product, searchParams] = await Promise.all([getProductById(id), props.searchParams]);
 
   if (!product) {
     notFound();
@@ -84,6 +87,12 @@ export default async function ProductDetailPage(props: PageProps<"/producto/[id]
     getCategoryById(product.categoryId),
     getRelatedProducts(product.categoryId, product.id),
   ]);
+
+  // Resolves the initially selected color from `?color=`, falling back to
+  // the product's first variant. `null` for a product with no variants.
+  const colorParam = readStringParam(searchParams, "color");
+  const initialVariant =
+    product.variants.find((variant) => variant.colorName === colorParam) ?? product.variants[0] ?? null;
 
   const hasDiscount = product.isDiscountActive && !!product.discountPercentage;
   const discountedPrice = calculateDiscountedPrice(
@@ -137,73 +146,79 @@ export default async function ProductDetailPage(props: PageProps<"/producto/[id]
       {/* Default grid `stretch` (no `items-start`) so the left column's box always matches the
           full row height of the (taller, text-heavy) right column — this is the "rail" the
           sticky image travels along as the accordions expand/collapse. */}
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-12">
-        {/* Outer div: the "rail". `lg:h-full` only stretches to the grid row's height on
-            desktop, where the sticky behavior below needs a tall track to move within as the
-            row grows — on mobile (`grid-cols-1`, no sticky) there's no such row to stretch
-            into, so forcing `h-full` there would resolve against an indefinite height and blow
-            the box out. `min-w-0` stops this grid item from growing past its column track to
-            accommodate the thumbnail strip's horizontal scroll content. `relative` provides the
-            positioning context for the discount badge's `absolute` placement. */}
-        <div className="relative w-full min-w-0 lg:h-full">
-          {/* Inner div: the "wagon". This is the element that actually sticks while the user
-            scrolls through the rail — independent of how tall the sibling column becomes.
-            Sticky only activates on `lg`+: on mobile the two columns stack (`grid-cols-1`),
-            so sticking the image would pin it mid-scroll over the text below it. */}
-          <div className="lg:sticky lg:top-24">
-            {hasDiscount && (
-              <span className="absolute left-3 top-3 z-10 rounded-full bg-cairo-primary px-2.5 py-1 text-xs font-semibold text-cairo-bg">
-                -{product.discountPercentage}% OFF
-              </span>
-            )}
-            <ProductGallery images={product.imageUrls} alt={product.name} />
+      <ProductVariantProvider product={product} initialVariant={initialVariant}>
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-12">
+          {/* Outer div: the "rail". `lg:h-full` only stretches to the grid row's height on
+              desktop, where the sticky behavior below needs a tall track to move within as the
+              row grows — on mobile (`grid-cols-1`, no sticky) there's no such row to stretch
+              into, so forcing `h-full` there would resolve against an indefinite height and blow
+              the box out. `min-w-0` stops this grid item from growing past its column track to
+              accommodate the thumbnail strip's horizontal scroll content. `relative` provides the
+              positioning context for the discount badge's `absolute` placement. */}
+          <div className="relative w-full min-w-0 lg:h-full">
+            {/* Inner div: the "wagon". This is the element that actually sticks while the user
+              scrolls through the rail — independent of how tall the sibling column becomes.
+              Sticky only activates on `lg`+: on mobile the two columns stack (`grid-cols-1`),
+              so sticking the image would pin it mid-scroll over the text below it. */}
+            <div className="lg:sticky lg:top-24">
+              {hasDiscount && (
+                <span className="absolute left-3 top-3 z-10 rounded-full bg-cairo-primary px-2.5 py-1 text-xs font-semibold text-cairo-bg">
+                  -{product.discountPercentage}% OFF
+                </span>
+              )}
+              <ProductGallerySection />
+            </div>
           </div>
-        </div>
 
-        {/* `min-w-0` overrides the grid item's default `min-width: auto`, which otherwise lets a
-            long, unbroken product name push this column past its track and overflow the viewport. */}
-        <div className="min-w-0">
-          <h1 className="break-words font-heading text-4xl text-cairo-text">{product.name}</h1>
-          {hasDiscount ? (
-            <p className="mt-3 flex items-baseline gap-3">
-              <span className="text-lg text-cairo-text/50 line-through">
+          {/* `min-w-0` overrides the grid item's default `min-width: auto`, which otherwise lets a
+              long, unbroken product name push this column past its track and overflow the viewport. */}
+          <div className="min-w-0">
+            <h1 className="break-words font-heading text-4xl text-cairo-text">{product.name}</h1>
+            {hasDiscount ? (
+              <p className="mt-3 flex items-baseline gap-3">
+                <span className="text-lg text-cairo-text/50 line-through">
+                  {PRICE_FORMATTER.format(product.price)}
+                </span>
+                <span className="text-3xl font-bold text-cairo-primary">
+                  {PRICE_FORMATTER.format(discountedPrice)}
+                </span>
+              </p>
+            ) : (
+              <p className="mt-3 text-2xl font-semibold text-cairo-text">
                 {PRICE_FORMATTER.format(product.price)}
-              </span>
-              <span className="text-3xl font-bold text-cairo-primary">
-                {PRICE_FORMATTER.format(discountedPrice)}
-              </span>
-            </p>
-          ) : (
-            <p className="mt-3 text-2xl font-semibold text-cairo-text">
-              {PRICE_FORMATTER.format(product.price)}
-            </p>
-          )}
+              </p>
+            )}
 
-          {product.description && (
-            <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-cairo-text/60">
-              {product.description}
-            </p>
-          )}
+            {product.description && (
+              <p className="mt-4 line-clamp-2 text-sm leading-relaxed text-cairo-text/60">
+                {product.description}
+              </p>
+            )}
 
-          <div className="mt-8">
-            <ProductQuantityAddToCart product={product} />
-          </div>
+            <div className="mt-5">
+              <ProductColorSwatches />
+            </div>
 
-          {/* Trust badges: reduce purchase-decision friction right next to the primary CTA. */}
-          <ul className="mt-5 space-y-2.5 border-t border-cairo-text/10 pt-5">
-            {TRUST_BADGES.map(({ icon: Icon, label }) => (
-              <li key={label} className="flex items-center gap-2.5 text-xs text-cairo-text/60">
-                <Icon className="h-4 w-4 shrink-0 text-cairo-text/40" />
-                {label}
-              </li>
-            ))}
-          </ul>
+            <div className="mt-8">
+              <ProductQuantityAddToCart />
+            </div>
 
-          <div className="mt-8">
-            <Accordion items={accordionItems} />
+            {/* Trust badges: reduce purchase-decision friction right next to the primary CTA. */}
+            <ul className="mt-5 space-y-2.5 border-t border-cairo-text/10 pt-5">
+              {TRUST_BADGES.map(({ icon: Icon, label }) => (
+                <li key={label} className="flex items-center gap-2.5 text-xs text-cairo-text/60">
+                  <Icon className="h-4 w-4 shrink-0 text-cairo-text/40" />
+                  {label}
+                </li>
+              ))}
+            </ul>
+
+            <div className="mt-8">
+              <Accordion items={accordionItems} />
+            </div>
           </div>
         </div>
-      </div>
+      </ProductVariantProvider>
 
       {relatedProducts.length > 0 && (
         <section className="mt-20">
