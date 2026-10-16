@@ -4,7 +4,9 @@ import { notFound } from "next/navigation";
 import { ChevronRight, CreditCard, RotateCcw, Truck } from "lucide-react";
 import { getProductById, getRelatedProducts } from "@/services/productService";
 import { getCategoryById } from "@/services/categoryService";
-import { ProductVariantProvider, buildColorOptions } from "@/components/storefront/ProductVariantProvider";
+import { ProductVariantProvider } from "@/components/storefront/ProductVariantProvider";
+import { buildColorOptions } from "@/lib/colorOptions";
+import { ProductLoadError } from "@/components/storefront/ProductLoadError";
 import { ProductGallerySection } from "@/components/storefront/ProductGallerySection";
 import { ProductColorSwatches } from "@/components/storefront/ProductColorSwatches";
 import { ProductQuantityAddToCart } from "@/components/storefront/ProductQuantityAddToCart";
@@ -45,7 +47,18 @@ export async function generateMetadata(
   props: PageProps<"/producto/[id]">,
 ): Promise<Metadata> {
   const { id } = await props.params;
-  const product = await getProductById(id);
+
+  // Metadata generation runs as its own Server Component-like render pass —
+  // a thrown error here is just as capable of surfacing an opaque error to
+  // the crawler/browser, so it gets the same defensive try/catch as the
+  // page body below instead of letting a Supabase failure bubble up raw.
+  let product: Awaited<ReturnType<typeof getProductById>>;
+  try {
+    product = await getProductById(id);
+  } catch (error) {
+    console.error(`[ProductDetailPage:generateMetadata] Failed to load product "${id}":`, error);
+    return { title: "Producto no encontrado" };
+  }
 
   if (!product) {
     return { title: "Producto no encontrado" };
@@ -77,16 +90,40 @@ export async function generateMetadata(
  */
 export default async function ProductDetailPage(props: PageProps<"/producto/[id]">) {
   const { id } = await props.params;
-  const [product, searchParams] = await Promise.all([getProductById(id), props.searchParams]);
+  const searchParams = await props.searchParams;
+
+  // The product itself is the only data this page cannot render without.
+  // Any thrown error here (a Supabase outage, an unexpected schema
+  // mismatch in variant mapping, etc.) is caught and logged with its
+  // `digest` — the pointer back to the full server log entry — instead of
+  // letting it propagate, which is what surfaces to the browser as an
+  // opaque, unactionable "Minified React error #441".
+  let product: Awaited<ReturnType<typeof getProductById>>;
+  try {
+    product = await getProductById(id);
+  } catch (error) {
+    const digest = error instanceof Error ? (error as Error & { digest?: string }).digest : undefined;
+    console.error(`[ProductDetailPage] Failed to load product "${id}" (digest: ${digest ?? "none"}):`, error);
+    return <ProductLoadError />;
+  }
 
   if (!product) {
     notFound();
   }
 
-  const [category, relatedProducts] = await Promise.all([
-    getCategoryById(product.categoryId),
-    getRelatedProducts(product.categoryId, product.id),
-  ]);
+  // Category and related products are secondary, non-blocking content —
+  // if either fails to load, the product itself still renders; only the
+  // breadcrumb's category link and the cross-sell section are omitted.
+  let category: Awaited<ReturnType<typeof getCategoryById>> = null;
+  let relatedProducts: Awaited<ReturnType<typeof getRelatedProducts>> = [];
+  try {
+    [category, relatedProducts] = await Promise.all([
+      getCategoryById(product.categoryId),
+      getRelatedProducts(product.categoryId, product.id),
+    ]);
+  } catch (error) {
+    console.error(`[ProductDetailPage] Failed to load category/related products for "${id}":`, error);
+  }
 
   // Resolves the initially selected color from `?color=`, falling back to
   // the product's own base color (always the first entry — see

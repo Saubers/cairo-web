@@ -106,14 +106,23 @@ interface ProductVariantRow {
 
 const PRODUCT_VARIANT_COLUMNS = "id, product_id, color_name, color_hex, images, stock, created_at, updated_at";
 
+/**
+ * Defensive mapping: `images` must always come out as an array, even if a
+ * stale row (e.g. one written before the `images text[]` migration
+ * backfilled it, or returned by a client still on a cached schema) comes
+ * back as `null`/`undefined` from Supabase. Letting `undefined` through
+ * here is what causes a PDP Server Component crash downstream (e.g.
+ * `variant.images[0]`), which surfaces to the browser as an opaque
+ * "Minified React error #441".
+ */
 function mapRowToProductVariant(row: ProductVariantRow): ProductVariant {
   return {
     id: row.id,
     productId: row.product_id,
     colorName: row.color_name,
-    colorHex: row.color_hex,
-    images: row.images,
-    stock: row.stock,
+    colorHex: row.color_hex ?? null,
+    images: Array.isArray(row.images) ? row.images : [],
+    stock: row.stock ?? 0,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -330,7 +339,17 @@ export async function getProductById(id: string): Promise<Product | null> {
 
   if (!data) return null;
 
-  const variants = await getProductVariants(id);
+  // Variants are a secondary, purely additive dataset layered on top of the
+  // product's own base color/stock/images. If fetching them fails (schema
+  // mismatch, transient Supabase error, etc.), the product itself is still
+  // valid and renders fine with its base color — so the failure is logged
+  // and swallowed here instead of propagating up and crashing the whole PDP.
+  let variants: ProductVariant[] = [];
+  try {
+    variants = await getProductVariants(id);
+  } catch (variantsError) {
+    console.error(`[productService] Failed to fetch variants for product "${id}":`, variantsError);
+  }
 
   return { ...mapRowToProduct(data), variants };
 }
