@@ -14,37 +14,31 @@ const ADDED_FEEDBACK_MS = 2000;
  * Isolated as a Client Component (connects to `useCartStore`) so the
  * detail page itself stays a Server Component.
  *
- * Reads the product and currently selected color from `ProductVariantProvider`
- * (shared with `ProductColorSwatches`/`ProductGallerySection`) instead of
- * taking them as direct props, since the selected color can change after
- * this component first renders. For a product with no variants,
- * `selectedVariant` is always `null` and every calculation below falls back
- * to the product's own top-level `stock`/`price`/`imageUrls` — identical to
- * this component's pre-variants behavior.
+ * Reads the product and currently selected color option from
+ * `ProductVariantProvider` (shared with `ProductColorSwatches`/
+ * `ProductGallerySection`) instead of taking them as direct props, since
+ * the selection can change after this component first renders.
+ * `selectedColor` is `null` only if nothing has been explicitly selected
+ * yet — in that case "add to cart" is disabled rather than guessing.
  */
 export function ProductQuantityAddToCart() {
-  const { product, selectedVariant } = useProductVariant();
+  const { product, selectedColor } = useProductVariant();
   const addItem = useCartStore((state) => state.addItem);
   const [quantity, setQuantity] = useState(1);
   const [justAdded, setJustAdded] = useState(false);
 
-  const hasVariants = product.variants.length > 0;
-  // A variant-carrying product with no color selected yet (should not
-  // normally happen — the PDP always resolves a default) is treated as
-  // out of stock rather than silently falling back to the parent's stock,
-  // since that stock is not what would actually be decremented at checkout.
-  const availableStock = hasVariants ? selectedVariant?.stock ?? 0 : product.stock;
-  const outOfStock = availableStock <= 0;
+  const availableStock = selectedColor?.stock ?? 0;
+  const outOfStock = selectedColor !== null && availableStock <= 0;
 
   // Resets the quantity stepper whenever the selected color changes — a
   // quantity valid for one color's stock may exceed another's. Adjusted
   // directly during render (React's recommended pattern for resetting state
   // in response to a prop/context change) rather than in a `useEffect`, to
   // avoid an extra cascading render.
-  const [lastSeenVariantId, setLastSeenVariantId] = useState(selectedVariant?.id ?? null);
+  const [lastSeenVariantId, setLastSeenVariantId] = useState(selectedColor?.variantId ?? null);
 
-  if ((selectedVariant?.id ?? null) !== lastSeenVariantId) {
-    setLastSeenVariantId(selectedVariant?.id ?? null);
+  if ((selectedColor?.variantId ?? null) !== lastSeenVariantId) {
+    setLastSeenVariantId(selectedColor?.variantId ?? null);
     setQuantity(1);
   }
 
@@ -57,20 +51,32 @@ export function ProductQuantityAddToCart() {
   }
 
   function handleAddToCart(): void {
+    if (!selectedColor) return;
+
     addItem({
       productId: product.id,
-      variantId: hasVariants ? selectedVariant?.id ?? null : null,
-      colorName: hasVariants ? selectedVariant?.colorName ?? null : null,
+      variantId: selectedColor.variantId,
+      colorName: selectedColor.colorName,
       name: product.name,
       // Store the discounted price (a client-side preview only — the
       // checkout route is the authoritative source of truth for totals).
       price: calculateDiscountedPrice(product.price, product.discountPercentage, product.isDiscountActive),
       quantity,
-      imageUrl: (hasVariants ? selectedVariant?.imageUrl : product.imageUrls[0]) ?? null,
+      imageUrl: selectedColor.images[0] ?? null,
     });
 
     setJustAdded(true);
     window.setTimeout(() => setJustAdded(false), ADDED_FEEDBACK_MS);
+  }
+
+  const noColorSelected = selectedColor === null;
+  const isAddDisabled = noColorSelected || outOfStock;
+
+  function buttonLabel(): string {
+    if (noColorSelected) return "Selecciona un color";
+    if (outOfStock) return "Sin stock";
+    if (justAdded) return "¡Agregado!";
+    return "Agregar al Carrito";
   }
 
   return (
@@ -82,7 +88,7 @@ export function ProductQuantityAddToCart() {
             type="button"
             aria-label="Decrease quantity"
             onClick={handleDecrease}
-            disabled={outOfStock}
+            disabled={isAddDisabled}
             className="text-cairo-text transition-colors hover:text-cairo-primary disabled:opacity-40"
           >
             <Minus className="h-4 w-4" />
@@ -92,7 +98,7 @@ export function ProductQuantityAddToCart() {
             type="button"
             aria-label="Increase quantity"
             onClick={handleIncrease}
-            disabled={outOfStock || quantity >= availableStock}
+            disabled={isAddDisabled || quantity >= availableStock}
             className="text-cairo-text transition-colors hover:text-cairo-primary disabled:opacity-40"
           >
             <Plus className="h-4 w-4" />
@@ -103,11 +109,11 @@ export function ProductQuantityAddToCart() {
       <button
         type="button"
         onClick={handleAddToCart}
-        disabled={outOfStock}
+        disabled={isAddDisabled}
         className="flex w-full items-center justify-center gap-2 rounded-md bg-cairo-primary px-6 py-3 text-sm font-medium text-cairo-bg transition-opacity hover:opacity-90 disabled:opacity-50 sm:w-auto"
       >
         <ShoppingBag className="h-4 w-4" />
-        {outOfStock ? "Sin stock" : justAdded ? "¡Agregado!" : "Agregar al Carrito"}
+        {buttonLabel()}
       </button>
     </div>
   );

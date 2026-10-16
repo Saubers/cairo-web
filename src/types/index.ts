@@ -61,10 +61,29 @@ export interface ProductVariant {
   colorName: string;
   /** Optional swatch color, e.g. "#1a1a1a". */
   colorHex: string | null;
-  imageUrl: string;
+  images: string[];
   stock: number;
   createdAt: string;
   updatedAt: string;
+}
+
+/**
+ * A single selectable color option on the product detail page, unifying the
+ * product's own "base" color with its real `ProductVariant` rows into one
+ * flat list so the PDP never loses access to the original color once a
+ * variant is selected.
+ *
+ * `variantId: null` marks the synthetic "base color" option, derived from
+ * the product's own top-level `color`/`stock`/`imageUrls` rather than a real
+ * `product_variants` row — this mirrors the existing `CartItem.variantId`
+ * convention, where `null` already means "the base product, not a variant".
+ */
+export interface ColorOption {
+  variantId: string | null;
+  colorName: string;
+  colorHex: string | null;
+  images: string[];
+  stock: number;
 }
 
 /** Mirrors the `public.products` table. */

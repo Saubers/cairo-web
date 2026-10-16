@@ -85,7 +85,9 @@ create index idx_products_is_active on public.products (is_active);
 Optional color variants for a product. Purely additive: a product with zero
 variant rows keeps using its own top-level `color`/`stock`/`image_urls`
 exactly as before; a product WITH variant rows gets a per-color swatch
-selector on the storefront, each with its own image and stock.
+selector on the storefront (unified with the product's own base color on the
+PDP — see `buildColorOptions` in `ProductVariantProvider.tsx`), each with its
+own images and stock.
 
 ```sql
 create table public.product_variants (
@@ -93,7 +95,7 @@ create table public.product_variants (
   product_id uuid not null references public.products (id) on delete cascade,
   color_name text not null,
   color_hex text,                           -- optional swatch color, e.g. "#1a1a1a"
-  image_url text not null,
+  images text[] not null default '{}',      -- public Supabase Storage URLs
   stock integer not null default 0 check (stock >= 0),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),

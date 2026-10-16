@@ -98,13 +98,13 @@ interface ProductVariantRow {
   product_id: string;
   color_name: string;
   color_hex: string | null;
-  image_url: string;
+  images: string[];
   stock: number;
   created_at: string;
   updated_at: string;
 }
 
-const PRODUCT_VARIANT_COLUMNS = "id, product_id, color_name, color_hex, image_url, stock, created_at, updated_at";
+const PRODUCT_VARIANT_COLUMNS = "id, product_id, color_name, color_hex, images, stock, created_at, updated_at";
 
 function mapRowToProductVariant(row: ProductVariantRow): ProductVariant {
   return {
@@ -112,7 +112,7 @@ function mapRowToProductVariant(row: ProductVariantRow): ProductVariant {
     productId: row.product_id,
     colorName: row.color_name,
     colorHex: row.color_hex,
-    imageUrl: row.image_url,
+    images: row.images,
     stock: row.stock,
     createdAt: row.created_at,
     updatedAt: row.updated_at,

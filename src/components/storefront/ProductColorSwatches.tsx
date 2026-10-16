@@ -3,37 +3,42 @@
 import { useProductVariant } from "@/components/storefront/ProductVariantProvider";
 
 /**
- * Visual color swatches for the product detail page. Renders nothing when
- * the product has no variants, so a non-variant product's page is visually
+ * Visual color swatches for the product detail page. Renders every
+ * selectable color, including the product's own base/original color
+ * (always the first entry in `colorOptions` — see `ProductVariantProvider`)
+ * so it's never lost once a real variant has been picked.
+ *
+ * Renders nothing when there is nothing to choose between (the base color
+ * is the only option), so a non-variant product's page stays visually
  * identical to before this feature existed.
  */
 export function ProductColorSwatches() {
-  const { product, selectedVariant, selectVariant } = useProductVariant();
+  const { colorOptions, selectedColor, selectColor } = useProductVariant();
 
-  if (product.variants.length === 0) return null;
+  if (colorOptions.length <= 1) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-3" role="group" aria-label="Elegí un color">
-      {product.variants.map((variant) => {
-        const isSelected = selectedVariant?.id === variant.id;
+      {colorOptions.map((option) => {
+        const isSelected = selectedColor?.variantId === option.variantId;
 
         return (
           <button
-            key={variant.id}
+            key={option.variantId ?? "base"}
             type="button"
-            onClick={() => selectVariant(variant)}
+            onClick={() => selectColor(option)}
             aria-pressed={isSelected}
-            title={variant.colorName}
+            title={option.colorName}
             className={`h-9 w-9 rounded-full border-2 transition-colors ${
               isSelected ? "border-cairo-primary" : "border-transparent hover:border-cairo-text/30"
             }`}
-            style={{ backgroundColor: variant.colorHex ?? "#d4d4d4" }}
+            style={{ backgroundColor: option.colorHex ?? "#d4d4d4" }}
           >
-            <span className="sr-only">{variant.colorName}</span>
+            <span className="sr-only">{option.colorName}</span>
           </button>
         );
       })}
-      {selectedVariant && <span className="text-sm text-cairo-text/60">{selectedVariant.colorName}</span>}
+      {selectedColor && <span className="text-sm text-cairo-text/60">{selectedColor.colorName}</span>}
     </div>
   );
 }

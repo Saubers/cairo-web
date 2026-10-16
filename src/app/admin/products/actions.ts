@@ -60,7 +60,7 @@ async function replaceProductVariants(
       product_id: productId,
       color_name: variant.colorName,
       color_hex: variant.colorHex,
-      image_url: variant.imageUrl,
+      images: variant.images,
       stock: variant.stock,
     })),
   );

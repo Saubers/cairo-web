@@ -14,7 +14,9 @@ const productVariantSchema = z.object({
     .trim()
     .regex(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/, "El color debe ser un código hexadecimal válido.")
     .nullable(),
-  imageUrl: z.string().url("La imagen del color debe ser una URL válida."),
+  images: z
+    .array(z.string().url("Cada imagen del color debe ser una URL válida."))
+    .min(1, "Cada color necesita al menos una foto."),
   stock: z
     .number()
     .int("El stock debe ser un número entero.")

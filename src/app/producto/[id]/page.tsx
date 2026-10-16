@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { ChevronRight, CreditCard, RotateCcw, Truck } from "lucide-react";
 import { getProductById, getRelatedProducts } from "@/services/productService";
 import { getCategoryById } from "@/services/categoryService";
-import { ProductVariantProvider } from "@/components/storefront/ProductVariantProvider";
+import { ProductVariantProvider, buildColorOptions } from "@/components/storefront/ProductVariantProvider";
 import { ProductGallerySection } from "@/components/storefront/ProductGallerySection";
 import { ProductColorSwatches } from "@/components/storefront/ProductColorSwatches";
 import { ProductQuantityAddToCart } from "@/components/storefront/ProductQuantityAddToCart";
@@ -89,10 +89,12 @@ export default async function ProductDetailPage(props: PageProps<"/producto/[id]
   ]);
 
   // Resolves the initially selected color from `?color=`, falling back to
-  // the product's first variant. `null` for a product with no variants.
+  // the product's own base color (always the first entry — see
+  // `buildColorOptions`) so a color is always explicitly selected on entry,
+  // never left ambiguous.
   const colorParam = readStringParam(searchParams, "color");
-  const initialVariant =
-    product.variants.find((variant) => variant.colorName === colorParam) ?? product.variants[0] ?? null;
+  const colorOptions = buildColorOptions(product);
+  const initialColor = colorOptions.find((option) => option.colorName === colorParam) ?? colorOptions[0];
 
   const hasDiscount = product.isDiscountActive && !!product.discountPercentage;
   const discountedPrice = calculateDiscountedPrice(
@@ -146,7 +148,7 @@ export default async function ProductDetailPage(props: PageProps<"/producto/[id]
       {/* Default grid `stretch` (no `items-start`) so the left column's box always matches the
           full row height of the (taller, text-heavy) right column — this is the "rail" the
           sticky image travels along as the accordions expand/collapse. */}
-      <ProductVariantProvider product={product} initialVariant={initialVariant}>
+      <ProductVariantProvider product={product} initialColor={initialColor}>
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-2 lg:gap-12">
           {/* Outer div: the "rail". `lg:h-full` only stretches to the grid row's height on
               desktop, where the sticky behavior below needs a tall track to move within as the

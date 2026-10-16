@@ -50,10 +50,10 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
     <div className="group relative w-full min-w-0">
       {/* Strict `aspect-square` + `max-w-full` instead of a fixed `h-[...]` — the box is always
           exactly as tall as it is wide, so it scales down cleanly on any mobile viewport instead
-          of blowing out to a fixed pixel height. `bg-transparent` (not a tinted box) lets a
-          calado product photo blend into the page's cream background instead of sitting on a
-          visible "patch". */}
-      <div ref={emblaRef} className="relative aspect-square w-full max-w-full overflow-hidden rounded-lg bg-transparent">
+          of blowing out to a fixed pixel height. `bg-white`/`rounded-2xl` match the "premium
+          white card" treatment used by `ProductCard` in the catalog grid, since the uploaded
+          product JPGs already carry their own white background. */}
+      <div ref={emblaRef} className="relative aspect-square w-full max-w-full overflow-hidden rounded-2xl bg-white">
         <div className="flex h-full">
           {images.map((src, index) => (
             <div key={src} className="relative h-full min-w-0 flex-[0_0_100%]">
@@ -63,6 +63,7 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
                 fill
                 sizes="(max-width: 768px) 100vw, 50vw"
                 priority={index === 0}
+                dropShadow={false}
               />
             </div>
           ))}
@@ -100,7 +101,7 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
                 type="button"
                 aria-label={`Go to image ${index + 1}`}
                 onClick={() => scrollTo(index)}
-                className={`relative h-20 w-20 shrink-0 snap-start overflow-hidden rounded-md border-2 transition-colors sm:h-24 sm:w-24 ${
+                className={`relative aspect-square h-20 w-20 shrink-0 snap-start overflow-hidden rounded-md border-2 bg-white transition-colors sm:h-24 sm:w-24 ${
                   index === selectedIndex ? "border-cairo-primary" : "border-transparent"
                 }`}
               >
@@ -110,6 +111,7 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
                   fill
                   sizes="96px"
                   hoverLift={false}
+                  dropShadow={false}
                 />
               </button>
             ))}

@@ -21,12 +21,12 @@ interface VariantRow {
   localId: string;
   colorName: string;
   colorHex: string;
-  imageUrl: string;
+  images: string[];
   stock: string;
 }
 
 function emptyVariantRow(): VariantRow {
-  return { localId: crypto.randomUUID(), colorName: "", colorHex: "", imageUrl: "", stock: "0" };
+  return { localId: crypto.randomUUID(), colorName: "", colorHex: "", images: [], stock: "0" };
 }
 
 interface ProductFormProps {
@@ -88,7 +88,7 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
       localId: variant.id,
       colorName: variant.colorName,
       colorHex: variant.colorHex ?? "",
-      imageUrl: variant.imageUrl,
+      images: variant.images,
       stock: String(variant.stock),
     })),
   );
@@ -149,7 +149,7 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
 
   function handleVariantFieldChange(
     localId: string,
-    field: "colorName" | "colorHex" | "stock" | "imageUrl",
+    field: "colorName" | "colorHex" | "stock",
     value: string,
   ): void {
     setVariants((current) =>
@@ -157,34 +157,48 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
     );
   }
 
-  /** Uploads a single variant's color photo to the shared `product-media` bucket, same pattern as `handleImagesSelected`. */
-  async function handleVariantImageSelected(localId: string, files: File[]): Promise<void> {
-    const file = files[0];
-    if (!file) return;
-
+  /** Uploads one or more photos for a variant's color to the shared `product-media` bucket, same pattern as `handleImagesSelected`. */
+  async function handleVariantImagesSelected(localId: string, files: File[]): Promise<void> {
     setUploadingVariantId(localId);
 
     try {
       const supabase = createClient();
-      const fileExt = file.name.split(".").pop();
-      const fileName = `${crypto.randomUUID()}.${fileExt}`;
+      const uploadedUrls: string[] = [];
 
-      const { error } = await supabase.storage.from("product-media").upload(fileName, file);
+      for (const file of files) {
+        const fileExt = file.name.split(".").pop();
+        const fileName = `${crypto.randomUUID()}.${fileExt}`;
 
-      if (error) {
-        throw new Error(`Failed to upload image: ${error.message}`);
+        const { error } = await supabase.storage.from("product-media").upload(fileName, file);
+
+        if (error) {
+          throw new Error(`Failed to upload image: ${error.message}`);
+        }
+
+        const { data } = supabase.storage.from("product-media").getPublicUrl(fileName);
+        uploadedUrls.push(data.publicUrl);
       }
 
-      const { data } = supabase.storage.from("product-media").getPublicUrl(fileName);
-
       setVariants((current) =>
-        current.map((variant) => (variant.localId === localId ? { ...variant, imageUrl: data.publicUrl } : variant)),
+        current.map((variant) =>
+          variant.localId === localId ? { ...variant, images: [...variant.images, ...uploadedUrls] } : variant,
+        ),
       );
     } catch (uploadError) {
       toast.error(uploadError instanceof Error ? uploadError.message : "Unexpected error.");
     } finally {
       setUploadingVariantId(null);
     }
+  }
+
+  function handleRemoveVariantImage(localId: string, urlToRemove: string): void {
+    setVariants((current) =>
+      current.map((variant) =>
+        variant.localId === localId
+          ? { ...variant, images: variant.images.filter((url) => url !== urlToRemove) }
+          : variant,
+      ),
+    );
   }
 
   function handleDiscountPercentageChange(value: string): void {
@@ -208,9 +222,9 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
     // before it's a valid variant — caught here (not just by the server
     // schema) so the admin gets immediate, specific feedback about which
     // row is incomplete instead of a generic validation error after submit.
-    const incompleteVariant = variants.find((variant) => !variant.colorName.trim() || !variant.imageUrl);
+    const incompleteVariant = variants.find((variant) => !variant.colorName.trim() || variant.images.length === 0);
     if (incompleteVariant) {
-      toast.error("Cada color necesita un nombre y una foto antes de guardar.");
+      toast.error("Cada color necesita un nombre y al menos una foto antes de guardar.");
       return;
     }
 
@@ -232,7 +246,7 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
       variants: variants.map((variant) => ({
         colorName: variant.colorName.trim(),
         colorHex: variant.colorHex.trim() || null,
-        imageUrl: variant.imageUrl,
+        images: variant.images,
         stock: Number(variant.stock),
       })),
     };
@@ -356,26 +370,33 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
                 key={variant.localId}
                 className="flex flex-col gap-4 rounded-md border border-cairo-text/10 p-4 sm:flex-row"
               >
-                <div className="w-full shrink-0 sm:w-40">
-                  {variant.imageUrl ? (
-                    <div className="relative h-24 w-24 overflow-hidden rounded-md border border-cairo-text/10">
-                      <Image src={variant.imageUrl} alt="" fill className="object-cover" />
-                      <button
-                        type="button"
-                        onClick={() => handleVariantFieldChange(variant.localId, "imageUrl", "")}
-                        aria-label="Quitar imagen"
-                        className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+                <div className="flex w-full flex-col gap-3 sm:w-40">
+                  {variant.images.length > 0 && (
+                    <div className="flex flex-wrap gap-2">
+                      {variant.images.map((url) => (
+                        <div
+                          key={url}
+                          className="relative h-20 w-20 overflow-hidden rounded-md border border-cairo-text/10"
+                        >
+                          <Image src={url} alt="" fill className="object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveVariantImage(variant.localId, url)}
+                            aria-label="Quitar imagen"
+                            className="absolute right-1 top-1 rounded-full bg-black/60 p-0.5 text-white hover:bg-black/80"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
                     </div>
-                  ) : (
-                    <ImageDropzone
-                      isUploading={uploadingVariantId === variant.localId}
-                      onFilesSelected={(files) => handleVariantImageSelected(variant.localId, files)}
-                      label="Foto del color"
-                    />
                   )}
+                  <ImageDropzone
+                    multiple
+                    isUploading={uploadingVariantId === variant.localId}
+                    onFilesSelected={(files) => handleVariantImagesSelected(variant.localId, files)}
+                    label="Fotos del producto en este color"
+                  />
                 </div>
 
                 <div className="flex flex-1 flex-col gap-3">
