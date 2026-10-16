@@ -33,8 +33,11 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
   );
 
   return (
-    <article className="group transition-all duration-200 ease-in-out hover:-translate-y-1">
-      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-cairo-accent-yellow/40">
+    <article className="group">
+      {/* `bg-transparent` (not a white or tinted box) so a calado product photo blends straight
+          into the page's cream background — the hover lift + drop-shadow below (applied to the
+          image itself, see `ProductImage`) give the product depth instead of a hard-edged box. */}
+      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-transparent">
         <Link href={href} aria-label={product.name} className="absolute inset-0 z-0 block">
           <ProductImageCarousel images={product.imageUrls} alt={product.name} priority={priority} />
         </Link>

@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import useEmblaCarousel from "embla-carousel-react";
 import { useCallback, useEffect, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ProductImage } from "@/components/storefront/ProductImage";
 
 interface ProductGalleryProps {
   images: string[];
@@ -45,24 +45,24 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
   }
 
   return (
-    <div className="relative w-full min-w-0">
+    // `group` wraps the whole gallery so `ProductImage`'s hover lift (on the main slide below)
+    // reacts to hovering anywhere over this block, not just the exact pixels of the photo.
+    <div className="group relative w-full min-w-0">
       {/* Strict `aspect-square` + `max-w-full` instead of a fixed `h-[...]` — the box is always
           exactly as tall as it is wide, so it scales down cleanly on any mobile viewport instead
-          of blowing out to a fixed pixel height. */}
-      <div
-        ref={emblaRef}
-        className="relative aspect-square w-full max-w-full overflow-hidden rounded-lg bg-cairo-accent-yellow/40"
-      >
+          of blowing out to a fixed pixel height. `bg-transparent` (not a tinted box) lets a
+          calado product photo blend into the page's cream background instead of sitting on a
+          visible "patch". */}
+      <div ref={emblaRef} className="relative aspect-square w-full max-w-full overflow-hidden rounded-lg bg-transparent">
         <div className="flex h-full">
           {images.map((src, index) => (
             <div key={src} className="relative h-full min-w-0 flex-[0_0_100%]">
-              <Image
+              <ProductImage
                 src={src}
                 alt={`${alt} ${index + 1}`}
                 fill
                 sizes="(max-width: 768px) 100vw, 50vw"
                 priority={index === 0}
-                className="object-cover"
               />
             </div>
           ))}
@@ -104,12 +104,12 @@ export function ProductGallery({ images, alt }: ProductGalleryProps) {
                   index === selectedIndex ? "border-cairo-primary" : "border-transparent"
                 }`}
               >
-                <Image
+                <ProductImage
                   src={src}
                   alt={`${alt} thumbnail ${index + 1}`}
                   fill
                   sizes="96px"
-                  className="object-cover"
+                  hoverLift={false}
                 />
               </button>
             ))}

@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import useEmblaCarousel from "embla-carousel-react";
 import { useEffect, useState, type MouseEvent } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ProductImage } from "@/components/storefront/ProductImage";
 
 interface ProductImageCarouselProps {
   images: string[];
@@ -72,13 +72,12 @@ export function ProductImageCarousel({ images, alt, priority = false }: ProductI
         <div className="flex h-full">
           {images.map((src, index) => (
             <div key={src} className="relative h-full min-w-0 flex-[0_0_100%]">
-              <Image
+              <ProductImage
                 src={src}
                 alt={`${alt} ${index + 1}`}
                 fill
                 sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
                 priority={priority && index === 0}
-                className="object-cover transition-transform duration-500 group-hover:scale-105"
               />
             </div>
           ))}
