@@ -22,6 +22,16 @@ interface ProductImageProps extends Omit<ImageProps, "className" | "onLoad"> {
   className?: string;
   /** Lifts the photo slightly on hover. Expects an ancestor with the `group` class. */
   hoverLift?: boolean;
+  /**
+   * Applies a soft `drop-shadow` tracing the photo's own bounding box.
+   * Defaults to `true` for a cut-out (calado) photo floating on a plain
+   * background, where the shadow is what gives it visual weight. Pass
+   * `false` when the photo is framed inside its own bordered/white card
+   * (e.g. the catalog grid) — there, the shadow would draw a visible seam
+   * around the JPG's own white background instead of blending into the
+   * card's matching white surface.
+   */
+  dropShadow?: boolean;
 }
 
 /**
@@ -30,9 +40,9 @@ interface ProductImageProps extends Omit<ImageProps, "className" | "onLoad"> {
  *
  * - `object-contain` (never `object-cover`) so a bag's straps/handles are
  *   never cropped out, regardless of the source photo's aspect ratio.
- * - `drop-shadow` follows the PNG's alpha channel (unlike a box-shadow,
- *   which would draw a hard rectangle), giving a calado product photo a
- *   sense of weight without needing a background box under it.
+ * - `drop-shadow` (opt-out via `dropShadow={false}`) follows the image's
+ *   own bounding box, giving a calado product photo a sense of weight
+ *   without needing a background box under it.
  * - A cream-toned pulse skeleton covers the image area until the photo
  *   finishes decoding, avoiding an abrupt pop-in.
  */
@@ -40,6 +50,7 @@ export function ProductImage({
   blendMode = "normal",
   className = "",
   hoverLift = true,
+  dropShadow = true,
   alt,
   ...imageProps
 }: ProductImageProps) {
@@ -53,7 +64,8 @@ export function ProductImage({
         alt={alt}
         onLoad={() => setIsLoaded(true)}
         className={[
-          "object-contain drop-shadow-md transition-all duration-300",
+          "object-contain transition-all duration-300",
+          dropShadow ? "drop-shadow-md" : "",
           hoverLift ? "group-hover:-translate-y-1" : "",
           blendMode === "multiply" ? "mix-blend-multiply" : "",
           isLoaded ? "opacity-100" : "opacity-0",

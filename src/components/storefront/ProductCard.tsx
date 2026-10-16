@@ -21,6 +21,12 @@ const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
  * for SEO); the image carousel and "add to cart" action are isolated Client
  * Components. Clicking the image or title navigates to the product detail
  * page; clicking the carousel arrows or the "add to cart" button does not.
+ *
+ * Framed as a white, bordered "premium" card rather than letting the photo
+ * blend into the page background: the uploaded product JPGs carry their own
+ * white background, so matching that intentionally (instead of fighting it
+ * with a transparent/cream container) is what keeps the grid looking
+ * uniform across products shot against different real-world backdrops.
  */
 export function ProductCard({ product, priority = false }: ProductCardProps) {
   const href = `/producto/${product.id}`;
@@ -33,11 +39,16 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
   );
 
   return (
-    <article className="group">
-      {/* `bg-transparent` (not a white or tinted box) so a calado product photo blends straight
-          into the page's cream background — the hover lift + drop-shadow below (applied to the
-          image itself, see `ProductImage`) give the product depth instead of a hard-edged box. */}
-      <div className="relative aspect-[3/4] w-full overflow-hidden rounded-lg bg-transparent">
+    // `h-full` stretches every card to its grid row's height (the parent grid's default
+    // `align-items: stretch`), so a short one-line title never leaves its price sitting
+    // higher than a neighboring card's — see the `mt-auto` price block below.
+    <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-shadow duration-300 hover:shadow-md">
+      {/* Image frame: a strict, uniform aspect ratio so every card in the grid lines up
+          regardless of the uploaded photo's own dimensions — `object-contain` (applied inside
+          `ProductImageCarousel`/`ProductImage`) then fits a tall or wide bag inside this square
+          without cropping or stretching it. `shrink-0` keeps this frame's height fixed even if
+          the text block below grows past one line. */}
+      <div className="relative aspect-square w-full shrink-0 overflow-hidden bg-white">
         <Link href={href} aria-label={product.name} className="absolute inset-0 z-0 block">
           <ProductImageCarousel images={product.imageUrls} alt={product.name} priority={priority} />
         </Link>
@@ -59,24 +70,29 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
         </div>
       </div>
 
-      <Link href={href} className="mt-3 flex items-start justify-between gap-2">
+      {/* Text block: consistent padding regardless of title length. `flex-grow` lets this block
+          fill whatever vertical space `h-full` leaves above, and `mt-auto` on the price pins it
+          to the bottom of that space — so a two-line title never pushes the price further down
+          than a one-line title's price in the same grid row. */}
+      <Link href={href} className="flex flex-grow flex-col p-4">
         {/* `font-sans` is explicit here for clarity even though it is the
             default body typeface (Headline Sans, see tailwind.config.ts). */}
         <h3 className="font-sans text-sm text-cairo-text">{product.name}</h3>
-        {hasDiscount ? (
-          <p className="shrink-0 text-right">
-            <span className="block text-xs text-cairo-text/50 line-through">
-              {PRICE_FORMATTER.format(product.price)}
-            </span>
-            <span className="block text-sm font-bold text-cairo-primary">
-              {PRICE_FORMATTER.format(discountedPrice)}
-            </span>
-          </p>
-        ) : (
-          <p className="shrink-0 text-sm font-semibold text-cairo-text">
-            {PRICE_FORMATTER.format(product.price)}
-          </p>
-        )}
+
+        <div className="mt-auto pt-2">
+          {hasDiscount ? (
+            <p className="flex items-baseline gap-2">
+              <span className="text-xs text-cairo-text/50 line-through">
+                {PRICE_FORMATTER.format(product.price)}
+              </span>
+              <span className="text-sm font-bold text-cairo-primary">
+                {PRICE_FORMATTER.format(discountedPrice)}
+              </span>
+            </p>
+          ) : (
+            <p className="text-sm font-semibold text-cairo-text">{PRICE_FORMATTER.format(product.price)}</p>
+          )}
+        </div>
       </Link>
     </article>
   );

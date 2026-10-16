@@ -72,12 +72,18 @@ export function ProductImageCarousel({ images, alt, priority = false }: ProductI
         <div className="flex h-full">
           {images.map((src, index) => (
             <div key={src} className="relative h-full min-w-0 flex-[0_0_100%]">
+              {/* `hoverLift`/`dropShadow` disabled: the card itself now carries the hover
+                  affordance (`shadow-sm hover:shadow-md`) and the white, bordered frame around
+                  the photo, so lifting/shadowing the photo too would fight those card-level
+                  effects instead of blending into its white background. */}
               <ProductImage
                 src={src}
                 alt={`${alt} ${index + 1}`}
                 fill
                 sizes="(min-width: 1024px) 25vw, (min-width: 640px) 33vw, 50vw"
                 priority={priority && index === 0}
+                hoverLift={false}
+                dropShadow={false}
               />
             </div>
           ))}
