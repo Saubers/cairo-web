@@ -153,13 +153,49 @@ async function getProductVariants(productId: string): Promise<ProductVariant[]> 
 }
 
 /**
- * Maps a raw `products` row to the `Product` domain type. `variants` is
- * always an empty array here — `getProductById` is the only place that also
- * fetches and attaches real variant rows, since every other caller (catalog
- * grid, related products, CSV export, collection picker) only needs the
- * product's own fields, not its variants.
+ * Bulk-fetches every variant for a batch of products in a single query,
+ * grouped by `product_id`. Used by `getProducts` so the catalog grid can
+ * evaluate stock-aware display (`getAvailableDisplayVariant`/
+ * `getTotalStock` in `@/lib/productStock`) for an entire page of products
+ * without firing one query per card.
  */
-function mapRowToProduct(row: ProductRow): Product {
+async function getVariantsByProductId(productIds: string[]): Promise<Map<string, ProductVariant[]>> {
+  if (productIds.length === 0) return new Map();
+
+  const supabase = await createClient();
+
+  const { data, error } = await supabase
+    .from("product_variants")
+    .select(PRODUCT_VARIANT_COLUMNS)
+    .in("product_id", productIds)
+    .order("created_at", { ascending: true })
+    .returns<ProductVariantRow[]>();
+
+  if (error) {
+    throw new Error(`Failed to fetch variants for ${productIds.length} product(s): ${error.message}`);
+  }
+
+  const variantsByProductId = new Map<string, ProductVariant[]>();
+  for (const row of data ?? []) {
+    const variant = mapRowToProductVariant(row);
+    const existing = variantsByProductId.get(variant.productId);
+    if (existing) {
+      existing.push(variant);
+    } else {
+      variantsByProductId.set(variant.productId, [variant]);
+    }
+  }
+
+  return variantsByProductId;
+}
+
+/**
+ * Maps a raw `products` row to the `Product` domain type. `variants`
+ * defaults to an empty array for callers that don't need it (CSV export,
+ * collection picker, admin list) — `getProductById` and `getProducts` are
+ * the two places that fetch and pass real variant rows through.
+ */
+function mapRowToProduct(row: ProductRow, variants: ProductVariant[] = []): Product {
   return {
     id: row.id,
     name: row.name,
@@ -174,7 +210,7 @@ function mapRowToProduct(row: ProductRow): Product {
     isActive: row.is_active,
     discountPercentage: row.discount_percentage,
     isDiscountActive: row.is_discount_active,
-    variants: [],
+    variants,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -265,10 +301,24 @@ export async function getProducts(filters: ProductFilters = {}): Promise<Paginat
       throw new Error(`Failed to fetch products: ${error.message}`);
     }
 
+    const rows = data ?? [];
     const totalCount = count ?? 0;
 
+    // Fetched separately, in bulk for the whole page (one query, not one
+    // per product), so the catalog grid can pick a color with stock and
+    // sort out-of-stock products last (see `@/lib/productStock`). A
+    // failure here degrades to "no variants for this page" rather than
+    // failing the whole catalog fetch — variants are secondary to the
+    // products themselves.
+    let variantsByProductId = new Map<string, ProductVariant[]>();
+    try {
+      variantsByProductId = await getVariantsByProductId(rows.map((row) => row.id));
+    } catch (variantsError) {
+      console.error("[productService] Failed to fetch variants for the catalog page:", variantsError);
+    }
+
     return {
-      data: (data ?? []).map(mapRowToProduct),
+      data: rows.map((row) => mapRowToProduct(row, variantsByProductId.get(row.id) ?? [])),
       totalCount,
       totalPages: Math.max(1, Math.ceil(totalCount / PUBLIC_PAGE_SIZE)),
     };
@@ -351,7 +401,7 @@ export async function getProductById(id: string): Promise<Product | null> {
     console.error(`[productService] Failed to fetch variants for product "${id}":`, variantsError);
   }
 
-  return { ...mapRowToProduct(data), variants };
+  return mapRowToProduct(data, variants);
 }
 
 /**
@@ -397,7 +447,7 @@ export async function getAllProductsForAdmin(
   const totalCount = count ?? 0;
 
   return {
-    data: (data ?? []).map(mapRowToProduct),
+    data: (data ?? []).map((row) => mapRowToProduct(row)),
     totalCount,
     totalPages: Math.max(1, Math.ceil(totalCount / ADMIN_PAGE_SIZE)),
   };
@@ -434,7 +484,7 @@ export async function getAllProductsForExport(
     throw new Error(`Failed to fetch products for export: ${error.message}`);
   }
 
-  return (data ?? []).map(mapRowToProduct);
+  return (data ?? []).map((row) => mapRowToProduct(row));
 }
 
 /** Number of cross-sell cards shown in the product detail page's "related products" section. */
@@ -468,7 +518,7 @@ export async function getRelatedProducts(
     throw new Error(`Failed to fetch related products for category "${categoryId}": ${error.message}`);
   }
 
-  return (data ?? []).map(mapRowToProduct);
+  return (data ?? []).map((row) => mapRowToProduct(row));
 }
 
 /**

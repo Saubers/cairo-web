@@ -1,5 +1,6 @@
 import { HeroSlider } from "@/components/storefront/HeroSlider";
 import { CatalogSection } from "@/components/storefront/CatalogSection";
+import { getActiveHeroSlides } from "@/services/heroSlideService";
 import { readArrayParam, readNumberParam, readStringParam } from "@/lib/searchParams";
 
 // Server Component: the Navbar is rendered globally in the root layout.
@@ -14,9 +15,13 @@ export default async function Home(props: PageProps<"/">) {
   const minPrice = readNumberParam(searchParams, "minPrice");
   const maxPrice = readNumberParam(searchParams, "maxPrice");
 
+  // Cached for an hour at the data layer (see `getActiveHeroSlides`) — the
+  // rest of this page (the filterable catalog below) stays fully dynamic.
+  const slides = await getActiveHeroSlides();
+
   return (
     <>
-      <HeroSlider />
+      <HeroSlider slides={slides} />
 
       <CatalogSection
         title="Novedades"

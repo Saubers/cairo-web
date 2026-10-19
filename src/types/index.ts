@@ -51,6 +51,25 @@ export interface Collection {
 }
 
 /**
+ * Mirrors the `public.hero_slides` table — the storefront home page's
+ * carousel, fully admin-managed (see `/admin/carousel`). `title`,
+ * `subtitle`, `buttonText`, and `buttonLink` are all optional: a slide can
+ * be a pure background image, or a full image + copy + CTA.
+ */
+export interface HeroSlide {
+  id: string;
+  imageUrl: string;
+  title: string | null;
+  subtitle: string | null;
+  buttonText: string | null;
+  buttonLink: string | null;
+  displayOrder: number;
+  isActive: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
  * Mirrors the `public.product_variants` table. Purely additive to `Product`:
  * a product with no variants keeps using its own top-level `color`/`stock`/
  * `imageUrls`; a product with variants exposes one of these per color.

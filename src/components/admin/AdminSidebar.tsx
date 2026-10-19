@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeft,
+  GalleryHorizontal,
   Layers,
   LayoutDashboard,
   Package,
@@ -21,6 +22,7 @@ interface AdminNavItem {
 
 const ADMIN_NAV_ITEMS: AdminNavItem[] = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/carousel", label: "Carrusel", icon: GalleryHorizontal },
   { href: "/admin/products", label: "Productos", icon: Package },
   { href: "/admin/categories", label: "Categorías", icon: Tags },
   { href: "/admin/collections", label: "Colecciones", icon: Layers },

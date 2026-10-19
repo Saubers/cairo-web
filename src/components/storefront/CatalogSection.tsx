@@ -5,6 +5,7 @@ import { SearchBar } from "@/components/ui/SearchBar";
 import { Pagination } from "@/components/ui/Pagination";
 import { getAvailableColors, getProducts, type ProductSortOption } from "@/services/productService";
 import { getCategories } from "@/services/categoryService";
+import { getTotalStock } from "@/lib/productStock";
 
 interface CatalogSectionProps {
   title: string;
@@ -42,6 +43,15 @@ export async function CatalogSection({
     getAvailableColors(),
   ]);
 
+  // Push fully sold-out products (base color AND every variant at 0 stock)
+  // to the end of the grid, without disturbing the relative order of
+  // everything else (featured/date/etc. ordering from the query). `sort` is
+  // spec-stable since ES2019, so this partition-by-stock is safe to do
+  // directly on the fetched page.
+  const sortedProducts = [...products].sort(
+    (a, b) => (getTotalStock(b) > 0 ? 1 : 0) - (getTotalStock(a) > 0 ? 1 : 0),
+  );
+
   return (
     // `overflow-x-hidden` is a preventive guard: it contains any rogue child (e.g. a
     // filter control that briefly grows past its track) instead of letting it force a
@@ -67,9 +77,9 @@ export async function CatalogSection({
           </div>
         )}
 
-        {products.length > 0 ? (
+        {sortedProducts.length > 0 ? (
           <div className="grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">
-            {products.map((product, index) => (
+            {sortedProducts.map((product, index) => (
               // Only the very first card is above-the-fold on both the Home
               // page (right under the Hero) and `/catalogo` — it's the
               // page's actual LCP element, since `HeroSlider` renders no

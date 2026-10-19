@@ -3,6 +3,7 @@ import type { Product } from "@/types";
 import { AddToCartButton } from "@/components/storefront/AddToCartButton";
 import { ProductImageCarousel } from "@/components/storefront/ProductImageCarousel";
 import { calculateDiscountedPrice } from "@/lib/utils";
+import { getAvailableDisplayVariant } from "@/lib/productStock";
 
 interface ProductCardProps {
   product: Product;
@@ -31,7 +32,16 @@ const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
 export function ProductCard({ product, priority = false }: ProductCardProps) {
   const href = `/producto/${product.id}`;
   const hasDiscount = product.isDiscountActive && !!product.discountPercentage;
-  const outOfStock = product.stock <= 0;
+
+  // Picks the first color (base color or a real variant) that still has
+  // stock, so a product whose base color sold out but still has an
+  // available variant shows that variant's photo instead of an "Agotado"
+  // badge on a color nobody can actually buy. Only `null` when every color
+  // — base included — is sold out.
+  const displayVariant = getAvailableDisplayVariant(product);
+  const outOfStock = displayVariant === null;
+  const displayImages = displayVariant && displayVariant.images.length > 0 ? displayVariant.images : product.imageUrls;
+
   const discountedPrice = calculateDiscountedPrice(
     product.price,
     product.discountPercentage,
@@ -50,7 +60,7 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
           the text block below grows past one line. */}
       <div className="relative aspect-square w-full shrink-0 overflow-hidden bg-white">
         <Link href={href} aria-label={product.name} className="absolute inset-0 z-0 block">
-          <ProductImageCarousel images={product.imageUrls} alt={product.name} priority={priority} />
+          <ProductImageCarousel images={displayImages} alt={product.name} priority={priority} />
         </Link>
 
         {hasDiscount && (

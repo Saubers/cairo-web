@@ -3,6 +3,7 @@
 import { ShoppingBag } from "lucide-react";
 import { useCartStore } from "@/store/useCartStore";
 import { calculateDiscountedPrice } from "@/lib/utils";
+import { getAvailableDisplayVariant } from "@/lib/productStock";
 import type { Product } from "@/types";
 
 interface AddToCartButtonProps {
@@ -16,24 +17,30 @@ interface AddToCartButtonProps {
  */
 export function AddToCartButton({ product }: AddToCartButtonProps) {
   const addItem = useCartStore((state) => state.addItem);
-  const outOfStock = product.stock <= 0;
+  // Same base-or-first-in-stock-variant resolution as `ProductCard`'s image,
+  // so the quick-add button's enabled state and the color it actually adds
+  // always match what the card is visually showing.
+  const displayVariant = getAvailableDisplayVariant(product);
+  const outOfStock = displayVariant === null;
 
   function handleAddToCart(): void {
-    if (outOfStock) return;
+    if (outOfStock || !displayVariant) return;
+
+    // Only attach a `colorName` when the product actually has configured
+    // variants — otherwise every simple (no-variant) product would show a
+    // meaningless "Original" caption in the cart.
+    const hasVariants = product.variants.length > 0;
 
     addItem({
       productId: product.id,
-      // Catalog cards never fetch `variants` (see `mapRowToProduct`), so this
-      // quick-add path has no color to attach — only the PDP's
-      // `ProductQuantityAddToCart` resolves a real `variantId`/`colorName`.
-      variantId: null,
-      colorName: null,
+      variantId: displayVariant.variantId,
+      colorName: hasVariants ? displayVariant.colorName : null,
       name: product.name,
       // Store the discounted price (a client-side preview only — the
       // checkout route is the authoritative source of truth for totals).
       price: calculateDiscountedPrice(product.price, product.discountPercentage, product.isDiscountActive),
       quantity: 1,
-      imageUrl: product.imageUrls[0] ?? null,
+      imageUrl: displayVariant.images[0] ?? product.imageUrls[0] ?? null,
     });
   }
 

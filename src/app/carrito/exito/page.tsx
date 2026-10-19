@@ -32,6 +32,14 @@ export default async function CheckoutSuccessPage(props: PageProps<"/carrito/exi
       <p className="mt-2 text-sm text-cairo-text/60">
         Gracias por tu compra. Te enviamos un email con los detalles del pedido.
       </p>
+      {/* Reassurance copy: sets expectations for what happens next so the
+          customer isn't left wondering between this confirmation and the
+          shipping email. */}
+      <p className="mx-auto mt-3 max-w-md text-sm leading-relaxed text-cairo-text/60">
+        Estamos preparando tu pedido con mucho cariño. Pronto vas a recibir un nuevo correo con los
+        detalles del envío y tu número de seguimiento, para que puedas acompañar cada paso hasta que
+        llegue a tu puerta.
+      </p>
 
       {result && (
         <div className="text-left">
