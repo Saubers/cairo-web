@@ -10,6 +10,7 @@ import { ProductLoadError } from "@/components/storefront/ProductLoadError";
 import { ProductGallerySection } from "@/components/storefront/ProductGallerySection";
 import { ProductColorSwatches } from "@/components/storefront/ProductColorSwatches";
 import { ProductQuantityAddToCart } from "@/components/storefront/ProductQuantityAddToCart";
+import { ShippingCalculator } from "@/components/storefront/ShippingCalculator";
 import { ProductCard } from "@/components/storefront/ProductCard";
 import { Accordion, type AccordionItemData } from "@/components/ui/Accordion";
 import { calculateDiscountedPrice } from "@/lib/utils";
@@ -240,6 +241,10 @@ export default async function ProductDetailPage(props: PageProps<"/producto/[id]
 
             <div className="mt-8">
               <ProductQuantityAddToCart />
+            </div>
+
+            <div className="mt-3">
+              <ShippingCalculator />
             </div>
 
             {/* Trust badges: reduce purchase-decision friction right next to the primary CTA. */}
