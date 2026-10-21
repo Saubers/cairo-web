@@ -3,7 +3,7 @@ import { ProductCard } from "@/components/storefront/ProductCard";
 import { SortSelect } from "@/components/storefront/SortSelect";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Pagination } from "@/components/ui/Pagination";
-import { getAvailableColors, getProducts, type ProductSortOption } from "@/services/productService";
+import { getUniqueColors, getProducts, type ProductSortOption } from "@/services/productService";
 import { getCategories } from "@/services/categoryService";
 import { getTotalStock } from "@/lib/productStock";
 
@@ -40,7 +40,7 @@ export async function CatalogSection({
   const [{ data: products, totalPages }, categories, availableColors] = await Promise.all([
     getProducts({ categorySlug, colors, minPrice, maxPrice, searchQuery, page, sort }),
     getCategories(),
-    getAvailableColors(),
+    getUniqueColors(),
   ]);
 
   // Push fully sold-out products (base color AND every variant at 0 stock)

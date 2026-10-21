@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { createPublicClient } from "@/lib/supabase/public";
 import { endOfDayIso } from "@/lib/utils";
+import { normalizeColorKey, toTitleCaseColorName } from "@/lib/colorName";
 import type { Product, ProductVariant } from "@/types";
 
 /** Sort options for the public catalog grid, driven by the `?sort=` URL search param. */
@@ -279,6 +280,21 @@ async function fetchProducts(filters: ProductFilters): Promise<PaginatedProducts
     categoryId = category.id;
   }
 
+  // Resolved up front (same early-return shape as the category lookup
+  // above) because a color filter can match via either `products.color` or
+  // a `product_variants.color_name` row — a plain `.in("color", ...)` on
+  // the main query below would silently miss every product whose only
+  // color information lives on a variant.
+  let colorFilteredProductIds: string[] | null = null;
+
+  if (filters.colors && filters.colors.length > 0) {
+    colorFilteredProductIds = await resolveProductIdsMatchingColors(supabase, filters.colors);
+
+    if (colorFilteredProductIds.length === 0) {
+      return { data: [], totalCount: 0, totalPages: 1 };
+    }
+  }
+
   const [from, to] = toRange(filters.page ?? 1, PUBLIC_PAGE_SIZE);
   const sortOrder = resolveSortOrder(filters.sort);
 
@@ -297,8 +313,8 @@ async function fetchProducts(filters: ProductFilters): Promise<PaginatedProducts
     query = query.eq("collection_id", filters.collectionId);
   }
 
-  if (filters.colors && filters.colors.length > 0) {
-    query = query.in("color", filters.colors);
+  if (colorFilteredProductIds) {
+    query = query.in("id", colorFilteredProductIds);
   }
 
   if (filters.minPrice !== undefined) {
@@ -369,36 +385,172 @@ function isRangeNotSatisfiableError(code: string | undefined, message: string): 
 }
 
 /**
- * Distinct, sorted list of colors currently in use by active products.
- * Used to populate the color filter UI. PostgREST has no `DISTINCT`
- * operator, so deduplication happens in memory on the (small) result set.
+ * Distinct, normalized, sorted list of colors currently in use across the
+ * active catalog — both the base `products.color` field and every
+ * `product_variants.color_name`. Backs both the admin `ColorCombobox` (so a
+ * newly-typed color reuses an existing spelling instead of fragmenting it)
+ * and the public catalog's color filter.
+ *
+ * Colors are grouped by `normalizeColorKey` (case/diacritic-insensitive)
+ * before being returned, so "marron" and "Marrón" collapse into a single
+ * `toTitleCaseColorName`-formatted entry instead of appearing as two
+ * separate filter buttons. PostgREST has no `DISTINCT` operator, so
+ * deduplication happens in memory on the (small) result set.
  */
-async function fetchAvailableColors(): Promise<string[]> {
+async function fetchUniqueColors(): Promise<string[]> {
   const supabase = createPublicClient();
 
-  const { data, error } = await supabase
-    .from("products")
-    .select("color")
-    .eq("is_active", true)
-    .not("color", "is", null)
-    .returns<Pick<ProductRow, "color">[]>();
+  const [
+    { data: productRows, error: productError },
+    { data: variantRows, error: variantError },
+  ] = await Promise.all([
+    supabase
+      .from("products")
+      .select("color")
+      .eq("is_active", true)
+      .not("color", "is", null)
+      .returns<Pick<ProductRow, "color">[]>(),
+    // `!inner` scopes this to variants of currently-active products only —
+    // a draft/inactive product's variant colors must not show up as a
+    // filterable option on the storefront.
+    supabase
+      .from("product_variants")
+      .select("color_name, products!inner(is_active)")
+      .eq("products.is_active", true)
+      .returns<Pick<ProductVariantRow, "color_name">[]>(),
+  ]);
 
-  if (error) {
-    throw new Error(`Failed to fetch available colors: ${error.message}`);
+  if (productError) {
+    throw new Error(`Failed to fetch product colors: ${productError.message}`);
   }
 
-  const colors = (data ?? [])
-    .map((row) => row.color)
-    .filter((color): color is string => color !== null);
+  if (variantError) {
+    throw new Error(`Failed to fetch variant colors: ${variantError.message}`);
+  }
 
-  return Array.from(new Set(colors)).sort();
+  const rawColors = [
+    ...(productRows ?? []).map((row) => row.color).filter((color): color is string => color !== null),
+    ...(variantRows ?? []).map((row) => row.color_name),
+  ];
+
+  return buildUniqueColorList(rawColors);
+}
+
+/**
+ * Groups raw color spellings by `normalizeColorKey`, keeping the first
+ * occurrence's `toTitleCaseColorName` form as the canonical display value
+ * for that group, then returns the result sorted for a stable filter UI.
+ */
+function buildUniqueColorList(rawColors: string[]): string[] {
+  const colorsByKey = new Map<string, string>();
+
+  for (const rawColor of rawColors) {
+    const trimmed = rawColor.trim();
+    if (!trimmed) continue;
+
+    const key = normalizeColorKey(trimmed);
+    if (!colorsByKey.has(key)) {
+      colorsByKey.set(key, toTitleCaseColorName(trimmed));
+    }
+  }
+
+  return Array.from(colorsByKey.values()).sort((a, b) => a.localeCompare(b, "es"));
 }
 
 /** Cached for an hour — see `fetchProducts` above for why a plain client is required here. */
-export const getAvailableColors = unstable_cache(fetchAvailableColors, ["available-colors"], {
+export const getUniqueColors = unstable_cache(fetchUniqueColors, ["unique-colors"], {
   revalidate: 3600,
   tags: ["products"],
 });
+
+/**
+ * Expands a shopper's requested colors (e.g. `["Marrón"]`) into every raw
+ * spelling currently in the DB that folds to the same `normalizeColorKey`
+ * (e.g. `["Marrón", "marron"]`), across both `products.color` and
+ * `product_variants.color_name`.
+ *
+ * This is what lets a filter click on the canonical "Marrón" button (the
+ * one `getUniqueColors` surfaces) still match legacy rows stored before
+ * this normalization existed — new writes are already canonical (see
+ * `productSchema`'s `color`/`colorName` transform), so this only ever has
+ * aliases to resolve for pre-existing data, never for anything written
+ * going forward.
+ */
+async function expandColorAliases(
+  supabase: ReturnType<typeof createPublicClient>,
+  requestedColors: string[],
+): Promise<string[]> {
+  const requestedKeys = new Set(requestedColors.map(normalizeColorKey));
+
+  const [
+    { data: productRows, error: productError },
+    { data: variantRows, error: variantError },
+  ] = await Promise.all([
+    supabase.from("products").select("color").not("color", "is", null).returns<Pick<ProductRow, "color">[]>(),
+    supabase.from("product_variants").select("color_name").returns<Pick<ProductVariantRow, "color_name">[]>(),
+  ]);
+
+  if (productError) {
+    throw new Error(`Failed to resolve color aliases: ${productError.message}`);
+  }
+
+  if (variantError) {
+    throw new Error(`Failed to resolve color aliases: ${variantError.message}`);
+  }
+
+  const rawColors = [
+    ...(productRows ?? []).map((row) => row.color).filter((color): color is string => color !== null),
+    ...(variantRows ?? []).map((row) => row.color_name),
+  ];
+
+  const aliases = new Set(requestedColors);
+  for (const rawColor of rawColors) {
+    if (requestedKeys.has(normalizeColorKey(rawColor))) {
+      aliases.add(rawColor);
+    }
+  }
+
+  return Array.from(aliases);
+}
+
+/**
+ * Resolves which product ids match a set of requested colors, checking
+ * both the base `products.color` field and every `product_variants.color_name`
+ * — a product whose only color information lives on a variant must still
+ * be returned by the catalog filter, not silently excluded.
+ */
+async function resolveProductIdsMatchingColors(
+  supabase: ReturnType<typeof createPublicClient>,
+  colors: string[],
+): Promise<string[]> {
+  const expandedColors = await expandColorAliases(supabase, colors);
+
+  const [
+    { data: baseMatches, error: baseError },
+    { data: variantMatches, error: variantError },
+  ] = await Promise.all([
+    supabase.from("products").select("id").in("color", expandedColors).returns<Pick<ProductRow, "id">[]>(),
+    supabase
+      .from("product_variants")
+      .select("product_id")
+      .in("color_name", expandedColors)
+      .returns<Pick<ProductVariantRow, "product_id">[]>(),
+  ]);
+
+  if (baseError) {
+    throw new Error(`Failed to resolve base color matches: ${baseError.message}`);
+  }
+
+  if (variantError) {
+    throw new Error(`Failed to resolve variant color matches: ${variantError.message}`);
+  }
+
+  const matchedIds = new Set<string>();
+  for (const row of baseMatches ?? []) matchedIds.add(row.id);
+  for (const row of variantMatches ?? []) matchedIds.add(row.product_id);
+
+  return Array.from(matchedIds);
+}
 
 /**
  * Fetches a single product by id, regardless of `is_active`, for the admin

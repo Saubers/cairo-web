@@ -1,5 +1,6 @@
 import type { ColorOption, Product } from "@/types";
 import { buildColorOptions } from "@/lib/colorOptions";
+import { normalizeColorKey } from "@/lib/colorName";
 
 /**
  * Total stock across the product's base color and every real variant.
@@ -11,12 +12,12 @@ export function getTotalStock(product: Product): number {
   return buildColorOptions(product).reduce((total, option) => total + option.stock, 0);
 }
 
-/** Case/whitespace-insensitive comparison between a color name and the active color filter list. */
+/** Case/diacritic-insensitive comparison between a color name and the active color filter list. */
 export function matchesActiveColorFilter(colorName: string, activeColorFilter?: string[]): boolean {
   if (!activeColorFilter || activeColorFilter.length === 0) return false;
 
-  const normalizedColorName = colorName.trim().toLowerCase();
-  return activeColorFilter.some((filterColor) => filterColor.trim().toLowerCase() === normalizedColorName);
+  const normalizedColorName = normalizeColorKey(colorName);
+  return activeColorFilter.some((filterColor) => normalizeColorKey(filterColor) === normalizedColorName);
 }
 
 /**

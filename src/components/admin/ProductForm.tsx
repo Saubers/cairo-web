@@ -10,6 +10,7 @@ import { createProduct, updateProduct, type ProductFormInput } from "@/app/admin
 import { createClient } from "@/lib/supabase/client";
 import { Card } from "@/components/admin/ui/Card";
 import { ImageDropzone } from "@/components/admin/ui/ImageDropzone";
+import { ColorCombobox } from "@/components/admin/ui/ColorCombobox";
 
 /**
  * A single color-variant row being edited in the form. `localId` is a
@@ -33,6 +34,8 @@ interface ProductFormProps {
   categories: Category[];
   /** Active collections only, used to populate the optional Colección select. */
   collections: Collection[];
+  /** Every distinct color currently in use across the catalog (see `getUniqueColors`), offered by the `ColorCombobox` fields below. */
+  colors: string[];
   /** When provided, the form edits this product instead of creating a new one. */
   product?: Product;
 }
@@ -62,7 +65,7 @@ const LABEL_CLASS = "block text-sm font-medium text-cairo-text";
  * array of public URLs. Removing an image only drops it from the array —
  * the uploaded file itself is left in storage.
  */
-export function ProductForm({ categories, collections, product }: ProductFormProps) {
+export function ProductForm({ categories, collections, colors, product }: ProductFormProps) {
   const router = useRouter();
   const isEditing = product !== undefined;
 
@@ -323,13 +326,12 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
               <label htmlFor="color" className={LABEL_CLASS}>
                 Color (usado solo si no agregás colores/variantes abajo)
               </label>
-              <input
+              <ColorCombobox
                 id="color"
-                type="text"
                 value={color}
-                onChange={(event) => setColor(event.target.value)}
+                onChange={setColor}
+                options={colors}
                 placeholder="negro, rojo, beige..."
-                className={INPUT_CLASS}
               />
             </div>
           </div>
@@ -405,15 +407,12 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className={LABEL_CLASS}>Nombre del color</label>
-                      <input
-                        type="text"
+                      <ColorCombobox
                         required
                         value={variant.colorName}
-                        onChange={(event) =>
-                          handleVariantFieldChange(variant.localId, "colorName", event.target.value)
-                        }
+                        onChange={(value) => handleVariantFieldChange(variant.localId, "colorName", value)}
+                        options={colors}
                         placeholder="negro, rojo, beige..."
-                        className={INPUT_CLASS}
                       />
                     </div>
 

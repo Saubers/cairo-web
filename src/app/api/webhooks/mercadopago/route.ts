@@ -305,7 +305,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       revalidatePath("/catalogo");
       revalidatePath("/producto/[id]", "page");
       revalidatePath("/colecciones/[slug]", "page");
-      // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`/
+      // Busts the Data Cache entries backing `getProducts`/`getUniqueColors`/
       // `getActiveProductById` (see `src/services/productService.ts`) — this
       // runs in a Route Handler, not a Server Action, so `updateTag` (which
       // only works inside Server Actions) is not available here; `{ expire: 0 }`

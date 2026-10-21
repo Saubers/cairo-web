@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { normalizeColorKey, toTitleCaseColorName } from "@/lib/colorName";
 
 /**
  * A single color variant row submitted from the admin `ProductForm`.
@@ -8,7 +9,14 @@ import { z } from "zod";
  * rather than tied to a specific color-picker widget's output format.
  */
 const productVariantSchema = z.object({
-  colorName: z.string().trim().min(1, "El nombre del color es obligatorio."),
+  // `transform` runs after `min(1)`, so the "required" check still sees the
+  // raw input — the Title Case normalization below is purely a storage
+  // concern. This is the actual security/data-integrity boundary for color
+  // consistency: the admin `ColorCombobox` already steers towards an
+  // existing spelling client-side, but this schema is what guarantees every
+  // write — including a replayed request that bypasses the UI entirely —
+  // lands in the DB in one canonical casing (see `src/lib/colorName.ts`).
+  colorName: z.string().trim().min(1, "El nombre del color es obligatorio.").transform(toTitleCaseColorName),
   colorHex: z
     .string()
     .trim()
@@ -49,7 +57,9 @@ export const productSchema = z.object({
     .min(0, "El stock no puede ser negativo."),
   categoryId: z.string().uuid("Categoría inválida.").nullable(),
   collectionId: z.string().uuid("Colección inválida.").nullable(),
-  color: z.string().trim(),
+  // Same Title Case normalization as `colorName` above — keeps the base
+  // product's own color consistent with every variant's spelling.
+  color: z.string().trim().transform(toTitleCaseColorName),
   imageUrls: z.array(z.string().url("Cada imagen debe ser una URL válida.")),
   isActive: z.boolean(),
   // `null` means "no discount has ever been configured" (see `Product.discountPercentage`).
@@ -66,7 +76,11 @@ export const productSchema = z.object({
   variants: z
     .array(productVariantSchema)
     .refine(
-      (variants) => new Set(variants.map((variant) => variant.colorName.toLowerCase())).size === variants.length,
+      // `normalizeColorKey` (case- AND diacritic-insensitive) instead of a
+      // plain `.toLowerCase()`, so "Marrón" and "Marron" are also caught as
+      // the same color — `toTitleCaseColorName` above preserves accents, so
+      // those two would otherwise slip through as distinct strings.
+      (variants) => new Set(variants.map((variant) => normalizeColorKey(variant.colorName))).size === variants.length,
       { message: "No puede haber dos colores con el mismo nombre." },
     ),
 });

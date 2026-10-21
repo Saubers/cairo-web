@@ -128,7 +128,7 @@ export async function createProduct(input: unknown): Promise<ActionResult> {
   revalidatePath("/");
   revalidatePath("/admin/products");
   revalidatePath("/catalogo");
-  // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`
+  // Busts the Data Cache entries backing `getProducts`/`getUniqueColors`
   // (see `src/services/productService.ts`) immediately — `revalidatePath`
   // above only refreshes the page shell; without this a newly created
   // product would stay invisible on the storefront for up to an hour.
@@ -179,7 +179,7 @@ export async function updateProduct(id: string, input: unknown): Promise<ActionR
   revalidatePath("/catalogo");
   revalidatePath("/producto/[id]", "page");
   revalidatePath("/colecciones/[slug]", "page");
-  // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`/
+  // Busts the Data Cache entries backing `getProducts`/`getUniqueColors`/
   // `getActiveProductById` (see `src/services/productService.ts`) — without
   // this an edit (price, stock, images, etc.) would stay invisible on the
   // storefront for up to an hour.
@@ -201,7 +201,7 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
   revalidatePath("/admin/products");
   revalidatePath("/catalogo");
   revalidatePath("/colecciones/[slug]", "page");
-  // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`/
+  // Busts the Data Cache entries backing `getProducts`/`getUniqueColors`/
   // `getActiveProductById` — a deleted product must disappear from the
   // storefront immediately, not after the cache's 1-hour TTL.
   updateTag("products");
