@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Toaster } from "sonner";
 import { bagdoll, headlineSans } from "@/lib/fonts";
+import { getStoreSettings } from "@/services/storeSettingsService";
+import { StoreSettingsProvider } from "@/providers/StoreSettingsProvider";
 import { AnnouncementBar } from "@/components/layout/AnnouncementBar";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
@@ -30,7 +32,15 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // Fetched here, server-side, on every request (de-duped via React's
+  // `cache()` with any other `getStoreSettings()` call in the same request,
+  // e.g. `/admin/configuracion`'s own page-level read) so every client
+  // component downstream reads the real, admin-configured shipping settings
+  // through `StoreSettingsProvider` from its very first render — no client
+  // fetch, no default-then-real flash, no hydration mismatch.
+  const storeSettings = await getStoreSettings();
+
   return (
     <html lang="es-AR" className={`${bagdoll.variable} ${headlineSans.variable} antialiased`}>
       {/* Keep this class list minimal and scroll-safe: no `overflow-*`/`h-screen`/`overscroll-*`
@@ -40,24 +50,35 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
           `body` — `html` is this app's real scrolling box, so a `body`-only rule isn't enough),
           not here, to keep a single source of truth. */}
       <body className="flex min-h-screen flex-col bg-cairo-bg font-sans text-cairo-text">
-        <AnnouncementBar />
-        <Navbar />
-        <main className="flex w-full flex-1 flex-col">{children}</main>
-        <Footer />
-        {/* Floating feedback for every mutation (login, logout, admin CRUD, order
-            status updates) — replaces native alerts and static inline banners. */}
-        <Toaster
-          position="top-right"
-          richColors
-          closeButton
-          toastOptions={{
-            classNames: {
-              toast: "rounded-lg border border-cairo-text/10 bg-cairo-bg font-sans shadow-lg",
-              title: "text-cairo-text font-medium",
-              description: "text-cairo-text/70",
-            },
+        <StoreSettingsProvider
+          initialSettings={{
+            freeShippingThreshold: storeSettings.freeShippingThreshold,
+            flatShippingRate: storeSettings.flatShippingRate,
+            localPostalCode: storeSettings.localPostalCode,
+            shippingCostLocal: storeSettings.shippingCostLocal,
+            shippingCostNear: storeSettings.shippingCostNear,
+            shippingCostFar: storeSettings.shippingCostFar,
           }}
-        />
+        >
+          <AnnouncementBar />
+          <Navbar />
+          <main className="flex w-full flex-1 flex-col">{children}</main>
+          <Footer />
+          {/* Floating feedback for every mutation (login, logout, admin CRUD, order
+              status updates) — replaces native alerts and static inline banners. */}
+          <Toaster
+            position="top-right"
+            richColors
+            closeButton
+            toastOptions={{
+              classNames: {
+                toast: "rounded-lg border border-cairo-text/10 bg-cairo-bg font-sans shadow-lg",
+                title: "text-cairo-text font-medium",
+                description: "text-cairo-text/70",
+              },
+            }}
+          />
+        </StoreSettingsProvider>
       </body>
     </html>
   );

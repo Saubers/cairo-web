@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { FREE_SHIPPING_THRESHOLD, FLAT_SHIPPING_RATE } from "@/lib/shipping";
 import { DEFAULT_SHIPPING_ZONE_SETTINGS } from "@/lib/shippingZones";
@@ -31,16 +32,30 @@ interface StoreSettingsRow {
 const SETTINGS_COLUMNS =
   "id, free_shipping_threshold, flat_shipping_rate, local_postal_code, shipping_cost_local, shipping_cost_near, shipping_cost_far";
 
+const FALLBACK_SETTINGS: StoreSettings = {
+  id: "",
+  freeShippingThreshold: FREE_SHIPPING_THRESHOLD,
+  flatShippingRate: FLAT_SHIPPING_RATE,
+  ...DEFAULT_SHIPPING_ZONE_SETTINGS,
+};
+
 /**
  * Reads the single `store_settings` row via the cookie-aware (anon-key)
  * client — readable by anyone thanks to `store_settings_public_read`.
  *
  * Falls back to hardcoded defaults (with an empty `id`, which the admin
- * form treats as "not editable yet") if the row is somehow missing. It's
- * always seeded by migration, so this is only a safety net, not an
+ * form treats as "not editable yet") if the row is missing OR if the query
+ * itself fails. `RootLayout` calls this on every request to seed
+ * `StoreSettingsProvider`, so a transient Supabase outage must degrade to
+ * default pricing instead of crashing every page on the site — the row is
+ * always seeded by migration, so either branch is only a safety net, not an
  * expected path.
+ *
+ * Wrapped in React's `cache()` so multiple calls within the same request
+ * (e.g. `RootLayout` + `/admin/configuracion`'s own page-level read) share a
+ * single Supabase round-trip instead of fetching the row twice.
  */
-export async function getStoreSettings(): Promise<StoreSettings> {
+export const getStoreSettings = cache(async (): Promise<StoreSettings> => {
   const supabase = await createClient();
 
   const { data, error } = await supabase
@@ -50,16 +65,12 @@ export async function getStoreSettings(): Promise<StoreSettings> {
     .maybeSingle<StoreSettingsRow>();
 
   if (error) {
-    throw new Error(`Failed to fetch store settings: ${error.message}`);
+    console.error("[getStoreSettings] Failed to fetch store settings, using fallback defaults:", error);
+    return FALLBACK_SETTINGS;
   }
 
   if (!data) {
-    return {
-      id: "",
-      freeShippingThreshold: FREE_SHIPPING_THRESHOLD,
-      flatShippingRate: FLAT_SHIPPING_RATE,
-      ...DEFAULT_SHIPPING_ZONE_SETTINGS,
-    };
+    return FALLBACK_SETTINGS;
   }
 
   return {
@@ -71,4 +82,4 @@ export async function getStoreSettings(): Promise<StoreSettings> {
     shippingCostNear: Number(data.shipping_cost_near),
     shippingCostFar: Number(data.shipping_cost_far),
   };
-}
+});

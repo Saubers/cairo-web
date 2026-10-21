@@ -39,9 +39,12 @@ export async function updateStoreSettings(
   }
 
   revalidatePath("/admin/configuracion");
-  // The storefront's `useStoreSettings` hook reads this table live, and
-  // `/api/checkout` re-fetches it on every request — no other path needs
-  // revalidating for the new values to take effect.
+  // `useStoreSettings` is now backed by `StoreSettingsProvider`, seeded by
+  // `RootLayout`'s own `getStoreSettings()` call — revalidating the root
+  // layout (not just this page) is what makes the storefront pick up the
+  // new values on the next navigation/`router.refresh()`. `/api/checkout`
+  // needs no revalidation since it re-fetches on every request regardless.
+  revalidatePath("/", "layout");
   return {};
 }
 
@@ -90,5 +93,9 @@ export async function updateShippingZoneSettings(
   }
 
   revalidatePath("/admin/configuracion");
+  // See the matching comment in `updateStoreSettings` above: revalidates
+  // `RootLayout` itself so `StoreSettingsProvider`'s snapshot (and therefore
+  // every `useStoreSettings()` consumer) picks up the new zone pricing.
+  revalidatePath("/", "layout");
   return {};
 }

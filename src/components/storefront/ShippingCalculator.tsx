@@ -7,6 +7,7 @@ import { Truck, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { calculateShippingByPostalCode, type ShippingZoneEstimate } from "@/lib/shippingZones";
 import { useStoreSettings } from "@/hooks/useStoreSettings";
+import { useIsMounted } from "@/hooks/useIsMounted";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -34,10 +35,9 @@ const LOCAL_STORAGE_KEY = "cairo_user_cp";
 export function ShippingCalculator() {
   // Guards against a hydration mismatch: the saved postal code can only be
   // read from the browser (localStorage / Supabase session) after mount, so
-  // the inline summary below is only rendered once that read has happened —
-  // both the server and the client's first paint render the plain trigger
-  // button instead.
-  const [isMounted, setIsMounted] = useState(false);
+  // the inline summary below is only rendered once mounted — both the server
+  // and the client's first paint render the plain trigger button instead.
+  const isMounted = useIsMounted();
 
   const [isOpen, setIsOpen] = useState(false);
   const [postalCode, setPostalCode] = useState("");
@@ -96,11 +96,6 @@ export function ShippingCalculator() {
       } catch {
         // Session lookup failed — ignore it silently, the plain
         // "Calcular envío" trigger is still a safe fallback.
-      } finally {
-        // Set after the restore attempt (success or not) settles, rather
-        // than synchronously at the top of the effect, so this doesn't
-        // trigger a cascading render on every mount.
-        setIsMounted(true);
       }
     }
 

@@ -11,8 +11,13 @@ const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   maximumFractionDigits: 0,
 });
 
+// Explicit `timeZone`: this is a Server Component, so the date renders once
+// with whatever timezone the server process happens to run in (e.g. UTC on
+// Cloudflare) unless pinned here — without it, an order placed late at night
+// in Argentina (UTC-3) could render under the wrong calendar day.
 const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", {
   dateStyle: "medium",
+  timeZone: "America/Argentina/Buenos_Aires",
 });
 
 /** Display label + badge color for each real `orders.status` value. */

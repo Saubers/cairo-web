@@ -13,7 +13,12 @@ import { ORDER_STATUS_BADGE } from "@/lib/orderStatus";
 import { sendShippingEmail } from "@/lib/email";
 import type { OrderStatus } from "@/types";
 
-const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", { dateStyle: "medium" });
+// Explicit `timeZone` so the exported CSV/email date matches Argentina's
+// calendar day regardless of the server process's own runtime timezone.
+const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", {
+  dateStyle: "medium",
+  timeZone: "America/Argentina/Buenos_Aires",
+});
 
 // -----------------------------------------------------------------------------
 // Note on authorization: this runs through the anon-key Supabase client

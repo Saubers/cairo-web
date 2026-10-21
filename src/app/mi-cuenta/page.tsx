@@ -2,8 +2,13 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { ProfileForm } from "@/components/account/ProfileForm";
 
+// Explicit `timeZone`: this is a Server Component, so the date renders once
+// with whatever timezone the server process happens to run in (e.g. UTC on
+// Cloudflare) unless pinned here — without it, this could render under the
+// wrong calendar day relative to Argentina (UTC-3).
 const DATE_FORMATTER = new Intl.DateTimeFormat("es-AR", {
   dateStyle: "long",
+  timeZone: "America/Argentina/Buenos_Aires",
 });
 
 /** Raw shape returned by Supabase for the `profiles` table (snake_case columns). */
