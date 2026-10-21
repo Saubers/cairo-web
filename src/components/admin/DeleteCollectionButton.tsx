@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -19,22 +19,21 @@ export function DeleteCollectionButton({
 }: DeleteCollectionButtonProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
-  async function handleConfirmDelete(): Promise<void> {
-    setIsDeleting(true);
-    const result = await deleteCollection(collectionId);
+  function handleConfirmDelete(): void {
+    startTransition(async () => {
+      const result = await deleteCollection(collectionId);
 
-    if (result.error) {
-      toast.error(result.error);
-      setIsDeleting(false);
-      return;
-    }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
 
-    toast.success("Colección eliminada.");
-    setIsModalOpen(false);
-    setIsDeleting(false);
-    router.refresh();
+      toast.success("Colección eliminada.");
+      setIsModalOpen(false);
+      router.refresh();
+    });
   }
 
   return (
@@ -55,7 +54,7 @@ export function DeleteCollectionButton({
         title="Eliminar colección"
         message={`¿Eliminar "${collectionName}"? Esta acción no se puede deshacer.`}
         confirmText="Eliminar"
-        isLoading={isDeleting}
+        isLoading={isPending}
       />
     </>
   );

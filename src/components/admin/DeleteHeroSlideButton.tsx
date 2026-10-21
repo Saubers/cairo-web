@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -16,22 +16,21 @@ interface DeleteHeroSlideButtonProps {
 export function DeleteHeroSlideButton({ slideId, slideTitle }: DeleteHeroSlideButtonProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isDeleting, setIsDeleting] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
-  async function handleConfirmDelete(): Promise<void> {
-    setIsDeleting(true);
-    const result = await deleteHeroSlide(slideId);
+  function handleConfirmDelete(): void {
+    startTransition(async () => {
+      const result = await deleteHeroSlide(slideId);
 
-    if (result.error) {
-      toast.error(result.error);
-      setIsDeleting(false);
-      return;
-    }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
 
-    toast.success("Slide eliminado.");
-    setIsModalOpen(false);
-    setIsDeleting(false);
-    router.refresh();
+      toast.success("Slide eliminado.");
+      setIsModalOpen(false);
+      router.refresh();
+    });
   }
 
   return (
@@ -52,7 +51,7 @@ export function DeleteHeroSlideButton({ slideId, slideTitle }: DeleteHeroSlideBu
         title="Eliminar slide"
         message={`¿Eliminar "${slideTitle || "este slide"}"? Esta acción no se puede deshacer.`}
         confirmText="Eliminar"
-        isLoading={isDeleting}
+        isLoading={isPending}
       />
     </>
   );

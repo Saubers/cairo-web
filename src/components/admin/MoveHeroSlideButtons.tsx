@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { toast } from "sonner";
@@ -17,19 +17,19 @@ interface MoveHeroSlideButtonsProps {
 /** Up/down reordering controls for a single row in the admin carousel table. */
 export function MoveHeroSlideButtons({ slideId, isFirst, isLast }: MoveHeroSlideButtonsProps) {
   const router = useRouter();
-  const [isMoving, setIsMoving] = useState(false);
+  const [isPending, startTransition] = useTransition();
 
-  async function handleMove(direction: "up" | "down"): Promise<void> {
-    setIsMoving(true);
-    const result = await moveHeroSlide(slideId, direction);
-    setIsMoving(false);
+  function handleMove(direction: "up" | "down"): void {
+    startTransition(async () => {
+      const result = await moveHeroSlide(slideId, direction);
 
-    if (result.error) {
-      toast.error(result.error);
-      return;
-    }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
 
-    router.refresh();
+      router.refresh();
+    });
   }
 
   return (
@@ -37,7 +37,7 @@ export function MoveHeroSlideButtons({ slideId, isFirst, isLast }: MoveHeroSlide
       <button
         type="button"
         onClick={() => handleMove("up")}
-        disabled={isFirst || isMoving}
+        disabled={isFirst || isPending}
         aria-label="Subir slide"
         className="rounded p-0.5 text-cairo-text/50 transition-colors duration-200 hover:text-cairo-primary disabled:pointer-events-none disabled:opacity-25"
       >
@@ -46,7 +46,7 @@ export function MoveHeroSlideButtons({ slideId, isFirst, isLast }: MoveHeroSlide
       <button
         type="button"
         onClick={() => handleMove("down")}
-        disabled={isLast || isMoving}
+        disabled={isLast || isPending}
         aria-label="Bajar slide"
         className="rounded p-0.5 text-cairo-text/50 transition-colors duration-200 hover:text-cairo-primary disabled:pointer-events-none disabled:opacity-25"
       >

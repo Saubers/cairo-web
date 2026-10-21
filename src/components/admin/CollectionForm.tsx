@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Loader2, Search, X } from "lucide-react";
@@ -53,7 +53,10 @@ export function CollectionForm({ products, collection }: CollectionFormProps) {
   const [productSearchQuery, setProductSearchQuery] = useState("");
 
   const [isUploading, setIsUploading] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the submit
+  // button's disabled/spinner state below.
+  const [isPending, startTransition] = useTransition();
 
   // Local, client-side filter — no fetch/navigation involved, so it stays
   // responsive even against the full, unpaginated product catalog.
@@ -97,9 +100,8 @@ export function CollectionForm({ products, collection }: CollectionFormProps) {
     }
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    setIsSubmitting(true);
 
     const input: CollectionFormInput = {
       name,
@@ -109,19 +111,20 @@ export function CollectionForm({ products, collection }: CollectionFormProps) {
       selectedProductIds,
     };
 
-    const result = isEditing
-      ? await updateCollection(collection.id, input)
-      : await createCollection(input);
+    startTransition(async () => {
+      const result = isEditing
+        ? await updateCollection(collection.id, input)
+        : await createCollection(input);
 
-    if (result.error) {
-      toast.error(result.error);
-      setIsSubmitting(false);
-      return;
-    }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
 
-    toast.success(isEditing ? "Colección actualizada." : "Colección creada.");
-    router.push("/admin/collections");
-    router.refresh();
+      toast.success(isEditing ? "Colección actualizada." : "Colección creada.");
+      router.push("/admin/collections");
+      router.refresh();
+    });
   }
 
   return (
@@ -226,11 +229,11 @@ export function CollectionForm({ products, collection }: CollectionFormProps) {
           <div className="flex gap-3 px-6 py-5">
             <button
               type="submit"
-              disabled={isSubmitting || isUploading}
+              disabled={isPending || isUploading}
               className="flex flex-1 items-center justify-center gap-2 rounded-md bg-cairo-primary px-5 py-2 text-sm font-medium text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
             >
-              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isSubmitting ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear colección"}
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isPending ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear colección"}
             </button>
             <button
               type="button"

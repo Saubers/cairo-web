@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Check, Loader2, Pencil, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
@@ -22,41 +22,43 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
   const router = useRouter();
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(category.name);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the save/delete
+  // buttons' disabled/spinner state below. Shared across both flows, since
+  // only one of them can be active for this row at a time.
+  const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
 
-  async function handleSave(): Promise<void> {
+  function handleSave(): void {
     setError(null);
-    setIsSubmitting(true);
 
-    const result = await updateCategory(category.id, name);
+    startTransition(async () => {
+      const result = await updateCategory(category.id, name);
 
-    if (result.error) {
-      setError(result.error);
-      setIsSubmitting(false);
-      return;
-    }
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
 
-    setIsEditing(false);
-    setIsSubmitting(false);
-    router.refresh();
+      setIsEditing(false);
+      router.refresh();
+    });
   }
 
-  async function handleConfirmDelete(): Promise<void> {
-    setIsSubmitting(true);
-    const result = await deleteCategory(category.id);
+  function handleConfirmDelete(): void {
+    startTransition(async () => {
+      const result = await deleteCategory(category.id);
 
-    if (result.error) {
-      toast.error(result.error);
-      setIsSubmitting(false);
-      return;
-    }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
 
-    toast.success("Categoría eliminada.");
-    setIsModalOpen(false);
-    setIsSubmitting(false);
-    router.refresh();
+      toast.success("Categoría eliminada.");
+      setIsModalOpen(false);
+      router.refresh();
+    });
   }
 
   const confirmDeleteModal = (
@@ -67,7 +69,7 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
       title="Eliminar categoría"
       message={`¿Eliminar "${category.name}"? Los productos de esta categoría quedarán sin categoría.`}
       confirmText="Eliminar"
-      isLoading={isSubmitting}
+      isLoading={isPending}
     />
   );
 
@@ -85,11 +87,11 @@ export function CategoryRowActions({ category }: CategoryRowActionsProps) {
           <button
             type="button"
             onClick={handleSave}
-            disabled={isSubmitting}
+            disabled={isPending}
             aria-label="Guardar"
             className="rounded-md bg-cairo-primary p-2 text-cairo-bg transition-colors duration-200 hover:opacity-90 disabled:opacity-50"
           >
-            {isSubmitting ? (
+            {isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Check className="h-4 w-4" />

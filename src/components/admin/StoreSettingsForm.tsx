@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -21,28 +21,30 @@ export function StoreSettingsForm({ settings }: StoreSettingsFormProps) {
   const [freeShippingThreshold, setFreeShippingThreshold] = useState(String(settings.freeShippingThreshold));
   const [flatShippingRate, setFlatShippingRate] = useState(String(settings.flatShippingRate));
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the submit
+  // button's disabled/spinner state below.
+  const [isPending, startTransition] = useTransition();
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     setError(null);
-    setIsSubmitting(true);
 
-    const result = await updateStoreSettings(
-      settings.id,
-      Number(freeShippingThreshold),
-      Number(flatShippingRate),
-    );
+    startTransition(async () => {
+      const result = await updateStoreSettings(
+        settings.id,
+        Number(freeShippingThreshold),
+        Number(flatShippingRate),
+      );
 
-    setIsSubmitting(false);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
 
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-
-    toast.success("Configuración actualizada.");
-    router.refresh();
+      toast.success("Configuración actualizada.");
+      router.refresh();
+    });
   }
 
   return (
@@ -83,11 +85,11 @@ export function StoreSettingsForm({ settings }: StoreSettingsFormProps) {
 
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isPending}
         className="flex items-center gap-2 rounded-md bg-cairo-primary px-4 py-2 text-sm font-medium text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
       >
-        {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        {isSubmitting ? "Guardando..." : "Guardar"}
+        {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+        {isPending ? "Guardando..." : "Guardar"}
       </button>
     </form>
   );

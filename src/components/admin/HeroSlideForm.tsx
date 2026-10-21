@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Loader2, X } from "lucide-react";
@@ -41,7 +41,10 @@ export function HeroSlideForm({ slide }: HeroSlideFormProps) {
   const [isActive, setIsActive] = useState(slide?.isActive ?? true);
 
   const [isUploading, setIsUploading] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the submit
+  // button's disabled/spinner state below.
+  const [isPending, startTransition] = useTransition();
 
   async function handleImageSelected(files: File[]): Promise<void> {
     const file = files[0];
@@ -69,9 +72,8 @@ export function HeroSlideForm({ slide }: HeroSlideFormProps) {
     }
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    setIsSubmitting(true);
 
     const input: HeroSlideFormInput = {
       imageUrl,
@@ -82,17 +84,18 @@ export function HeroSlideForm({ slide }: HeroSlideFormProps) {
       isActive,
     };
 
-    const result = isEditing ? await updateHeroSlide(slide.id, input) : await createHeroSlide(input);
+    startTransition(async () => {
+      const result = isEditing ? await updateHeroSlide(slide.id, input) : await createHeroSlide(input);
 
-    if (result.error) {
-      toast.error(result.error);
-      setIsSubmitting(false);
-      return;
-    }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
 
-    toast.success(isEditing ? "Slide actualizado." : "Slide creado.");
-    router.push("/admin/carousel");
-    router.refresh();
+      toast.success(isEditing ? "Slide actualizado." : "Slide creado.");
+      router.push("/admin/carousel");
+      router.refresh();
+    });
   }
 
   return (
@@ -171,11 +174,11 @@ export function HeroSlideForm({ slide }: HeroSlideFormProps) {
           <div className="flex gap-3 px-6 py-5">
             <button
               type="submit"
-              disabled={isSubmitting || isUploading}
+              disabled={isPending || isUploading}
               className="flex flex-1 items-center justify-center gap-2 rounded-md bg-cairo-primary px-5 py-2 text-sm font-medium text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
             >
-              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isSubmitting ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear slide"}
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isPending ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear slide"}
             </button>
             <button
               type="button"

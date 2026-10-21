@@ -380,11 +380,16 @@ export async function getOrdersForAdmin(filters: AdminOrderFilters = {}): Promis
 export async function getOrderForAdmin(orderId: string): Promise<AdminOrderDetail | null> {
   const supabase = await createClient();
 
-  const { data: orderRow, error: orderError } = await supabase
-    .from("orders")
-    .select(ORDER_COLUMNS)
-    .eq("id", orderId)
-    .maybeSingle<OrderRow>();
+  // Both reads only depend on `orderId` (known upfront), not on each other's
+  // result, so they run concurrently instead of waiting on two sequential
+  // round-trips. If the order doesn't exist, `itemRows` is simply discarded.
+  const [
+    { data: orderRow, error: orderError },
+    { data: itemRows, error: itemsError },
+  ] = await Promise.all([
+    supabase.from("orders").select(ORDER_COLUMNS).eq("id", orderId).maybeSingle<OrderRow>(),
+    supabase.from("order_items").select(ORDER_ITEM_COLUMNS).eq("order_id", orderId).returns<OrderItemRow[]>(),
+  ]);
 
   if (orderError) {
     throw new Error(`Failed to fetch order "${orderId}": ${orderError.message}`);
@@ -393,12 +398,6 @@ export async function getOrderForAdmin(orderId: string): Promise<AdminOrderDetai
   if (!orderRow) {
     return null;
   }
-
-  const { data: itemRows, error: itemsError } = await supabase
-    .from("order_items")
-    .select(ORDER_ITEM_COLUMNS)
-    .eq("order_id", orderId)
-    .returns<OrderItemRow[]>();
 
   if (itemsError) {
     throw new Error(`Failed to fetch items for order "${orderId}": ${itemsError.message}`);

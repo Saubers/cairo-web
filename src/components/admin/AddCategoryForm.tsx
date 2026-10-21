@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -16,26 +16,28 @@ export function AddCategoryForm({ onCreated }: AddCategoryFormProps) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the submit
+  // button's disabled/spinner state below.
+  const [isPending, startTransition] = useTransition();
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     setError(null);
-    setIsSubmitting(true);
 
-    const result = await createCategory(name);
+    startTransition(async () => {
+      const result = await createCategory(name);
 
-    if (result.error) {
-      setError(result.error);
-      setIsSubmitting(false);
-      return;
-    }
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
 
-    setName("");
-    setIsSubmitting(false);
-    toast.success("Categoría creada.");
-    router.refresh();
-    onCreated?.();
+      setName("");
+      toast.success("Categoría creada.");
+      router.refresh();
+      onCreated?.();
+    });
   }
 
   return (
@@ -57,11 +59,11 @@ export function AddCategoryForm({ onCreated }: AddCategoryFormProps) {
       </div>
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isPending}
         className="mt-6 flex items-center gap-2 rounded-md bg-cairo-primary px-4 py-2 text-sm font-medium text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
       >
-        {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        {isSubmitting ? "Agregando..." : "Agregar"}
+        {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+        {isPending ? "Agregando..." : "Agregar"}
       </button>
     </form>
   );

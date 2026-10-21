@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Loader2, Plus, X } from "lucide-react";
@@ -96,7 +96,10 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
   const [uploadingVariantId, setUploadingVariantId] = useState<string | null>(null);
 
   const [isUploading, setIsUploading] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the submit
+  // button's disabled/spinner state below.
+  const [isPending, startTransition] = useTransition();
 
   function handleNameChange(value: string): void {
     setName(value);
@@ -215,7 +218,7 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
     setDiscountPercentage(String(Math.min(100, Math.max(0, parsed))));
   }
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
 
     // Every variant row needs at least a color name and an uploaded image
@@ -227,8 +230,6 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
       toast.error("Cada color necesita un nombre y al menos una foto antes de guardar.");
       return;
     }
-
-    setIsSubmitting(true);
 
     const input: ProductFormInput = {
       name,
@@ -251,19 +252,20 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
       })),
     };
 
-    const result = isEditing
-      ? await updateProduct(product.id, input)
-      : await createProduct(input);
+    startTransition(async () => {
+      const result = isEditing
+        ? await updateProduct(product.id, input)
+        : await createProduct(input);
 
-    if (result.error) {
-      toast.error(result.error);
-      setIsSubmitting(false);
-      return;
-    }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
 
-    toast.success(isEditing ? "Producto actualizado." : "Producto creado.");
-    router.push("/admin/products");
-    router.refresh();
+      toast.success(isEditing ? "Producto actualizado." : "Producto creado.");
+      router.push("/admin/products");
+      router.refresh();
+    });
   }
 
   return (
@@ -487,11 +489,11 @@ export function ProductForm({ categories, collections, product }: ProductFormPro
           <div className="flex gap-3 px-6 py-5">
             <button
               type="submit"
-              disabled={isSubmitting || isUploading}
+              disabled={isPending || isUploading}
               className="flex flex-1 items-center justify-center gap-2 rounded-md bg-cairo-primary px-5 py-2 text-sm font-medium text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
             >
-              {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isSubmitting ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear producto"}
+              {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isPending ? "Guardando..." : isEditing ? "Guardar cambios" : "Crear producto"}
             </button>
             <button
               type="button"

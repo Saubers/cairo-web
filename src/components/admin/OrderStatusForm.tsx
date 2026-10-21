@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -30,7 +30,10 @@ export function OrderStatusForm({
   const [status, setStatus] = useState<OrderStatus>(currentStatus);
   const [trackingNumber, setTrackingNumber] = useState(currentTrackingNumber ?? "");
   const [shippingProvider, setShippingProvider] = useState(currentShippingProvider ?? "");
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the submit
+  // button's disabled/spinner state below.
+  const [isPending, startTransition] = useTransition();
 
   const isShipped = status === "shipped";
   const hasMissingShippingInfo = isShipped && (!trackingNumber.trim() || !shippingProvider.trim());
@@ -39,28 +42,27 @@ export function OrderStatusForm({
     trackingNumber === (currentTrackingNumber ?? "") &&
     shippingProvider === (currentShippingProvider ?? "");
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
-    setIsSubmitting(true);
 
-    const result = await updateOrderStatus({
-      orderId,
-      status,
-      trackingNumber: isShipped ? trackingNumber.trim() : undefined,
-      shippingProvider: isShipped ? shippingProvider.trim() : undefined,
+    startTransition(async () => {
+      const result = await updateOrderStatus({
+        orderId,
+        status,
+        trackingNumber: isShipped ? trackingNumber.trim() : undefined,
+        shippingProvider: isShipped ? shippingProvider.trim() : undefined,
+      });
+
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
+
+      toast.success("Estado del pedido actualizado.");
+      // Re-fetch the Server Component tree so `currentStatus` reflects the
+      // new value (keeps the "Guardar" button correctly disabled again).
+      router.refresh();
     });
-
-    if (result.error) {
-      toast.error(result.error);
-      setIsSubmitting(false);
-      return;
-    }
-
-    toast.success("Estado del pedido actualizado.");
-    setIsSubmitting(false);
-    // Re-fetch the Server Component tree so `currentStatus` reflects the
-    // new value (keeps the "Guardar" button correctly disabled again).
-    router.refresh();
   }
 
   return (
@@ -79,10 +81,10 @@ export function OrderStatusForm({
         </select>
         <button
           type="submit"
-          disabled={isSubmitting || isUnchanged || hasMissingShippingInfo}
+          disabled={isPending || isUnchanged || hasMissingShippingInfo}
           className="flex items-center gap-2 rounded-md bg-cairo-primary px-4 py-2 text-sm font-medium text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
         >
-          {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
+          {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
           Guardar
         </button>
       </div>

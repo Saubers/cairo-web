@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useTransition } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -28,30 +28,32 @@ export function ShippingZonesSettingsForm({ settings }: ShippingZonesSettingsFor
   const [shippingCostNear, setShippingCostNear] = useState(String(settings.shippingCostNear));
   const [shippingCostFar, setShippingCostFar] = useState(String(settings.shippingCostFar));
   const [error, setError] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  // `isPending` keeps the Server Action call off the main thread (no frozen
+  // UI while the Edge round-trip is in flight) and drives the submit
+  // button's disabled/spinner state below.
+  const [isPending, startTransition] = useTransition();
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>): Promise<void> {
+  function handleSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     setError(null);
-    setIsSubmitting(true);
 
-    const result = await updateShippingZoneSettings(
-      settings.id,
-      localPostalCode,
-      Number(shippingCostLocal),
-      Number(shippingCostNear),
-      Number(shippingCostFar),
-    );
+    startTransition(async () => {
+      const result = await updateShippingZoneSettings(
+        settings.id,
+        localPostalCode,
+        Number(shippingCostLocal),
+        Number(shippingCostNear),
+        Number(shippingCostFar),
+      );
 
-    setIsSubmitting(false);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
 
-    if (result.error) {
-      setError(result.error);
-      return;
-    }
-
-    toast.success("Tarifas de envío actualizadas.");
-    router.refresh();
+      toast.success("Tarifas de envío actualizadas.");
+      router.refresh();
+    });
   }
 
   return (
@@ -124,11 +126,11 @@ export function ShippingZonesSettingsForm({ settings }: ShippingZonesSettingsFor
 
       <button
         type="submit"
-        disabled={isSubmitting}
+        disabled={isPending}
         className="flex items-center gap-2 rounded-md bg-cairo-primary px-4 py-2 text-sm font-medium text-cairo-bg transition-all duration-200 ease-in-out hover:opacity-90 disabled:opacity-50"
       >
-        {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
-        {isSubmitting ? "Guardando..." : "Guardar"}
+        {isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+        {isPending ? "Guardando..." : "Guardar"}
       </button>
     </form>
   );
