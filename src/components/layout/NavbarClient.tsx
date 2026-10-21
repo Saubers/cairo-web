@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { usePathname } from "next/navigation";
 import type { User } from "@supabase/supabase-js";
 import { Menu, ShoppingBag } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
 import { useCartStore } from "@/store/useCartStore";
 import { NavDrawer } from "@/components/layout/NavDrawer";
 import { UserMenu } from "@/components/layout/UserMenu";
@@ -19,22 +20,73 @@ const NAV_LINKS: { href: string; label: string }[] = [
   { href: "#contacto", label: "Contacto" },
 ];
 
-interface NavbarClientProps {
+/**
+ * Client-resolved auth state for the account icon/menu. `status: "loading"`
+ * is what renders on both the server (this component is "use client", but
+ * Next.js still renders it once server-side for the initial HTML) and the
+ * client's first paint — identical on both sides, so there is no hydration
+ * mismatch — until the effect below resolves the real session.
+ */
+interface AuthState {
+  status: "loading" | "resolved";
   user: User | null;
-  /** The user's display name, resolved from `profiles.full_name` by the `Navbar` Server Component. */
   fullName: string | null;
 }
 
+const INITIAL_AUTH_STATE: AuthState = { status: "loading", user: null, fullName: null };
+
 /**
- * Interactive shell of the Navbar (scroll-collapse, drawer, cart badge).
- * Receives `user` from the `Navbar` Server Component so the account
- * icon/menu can render synchronously with the correct state — no client
- * session check or loading placeholder needed.
+ * Interactive shell of the Navbar (scroll-collapse, drawer, cart badge,
+ * account state). A pure Client Component: no `cookies()`/server Supabase
+ * client anywhere in this tree, so mounting it never forces the root layout
+ * (and therefore every public page under it) into dynamic SSR. The account
+ * icon/menu resolves its own session client-side via the browser Supabase
+ * client, trading a brief loading placeholder (see `UserMenu`) for a fully
+ * static-renderable shell.
  */
-export function NavbarClient({ user, fullName }: NavbarClientProps) {
+export function NavbarClient() {
   const pathname = usePathname();
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [auth, setAuth] = useState<AuthState>(INITIAL_AUTH_STATE);
+
+  useEffect(() => {
+    const supabase = createClient();
+    let isMounted = true;
+
+    // `full_name` lives in `profiles`, not in the auth user's metadata — the
+    // "Mi Cuenta" edit flow only ever writes to `profiles.full_name`, so
+    // that table (not `user.user_metadata`, which would go stale after an
+    // edit) is the single source of truth for the greeting shown in
+    // `UserMenu`.
+    async function resolveAuth(user: User | null): Promise<void> {
+      if (!user) {
+        if (isMounted) setAuth({ status: "resolved", user: null, fullName: null });
+        return;
+      }
+
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", user.id)
+        .maybeSingle<{ full_name: string | null }>();
+
+      if (isMounted) setAuth({ status: "resolved", user, fullName: profile?.full_name ?? null });
+    }
+
+    supabase.auth.getUser().then(({ data: { user } }) => resolveAuth(user));
+
+    // Keeps the account icon in sync with login/logout happening in this tab
+    // (or another tab sharing the same browser storage) without a reload.
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, session) => {
+      resolveAuth(session?.user ?? null);
+    });
+
+    return () => {
+      isMounted = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
 
   // The admin backoffice (`AdminShell`) has its own sidebar/topbar
   // navigation — the public drawer trigger would be redundant (and
@@ -150,7 +202,11 @@ export function NavbarClient({ user, fullName }: NavbarClientProps) {
 
           {/* Right: account access and shopping cart */}
           <div className="flex items-center justify-end gap-5">
-            <UserMenu user={user} fullName={fullName} />
+            <UserMenu
+              user={auth.user}
+              fullName={auth.fullName}
+              isLoading={auth.status === "loading"}
+            />
             <Link
               href="/carrito"
               aria-label="Shopping cart"

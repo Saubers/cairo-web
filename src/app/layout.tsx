@@ -4,7 +4,7 @@ import { bagdoll, headlineSans } from "@/lib/fonts";
 import { getStoreSettings } from "@/services/storeSettingsService";
 import { StoreSettingsProvider } from "@/providers/StoreSettingsProvider";
 import { AnnouncementBar } from "@/components/layout/AnnouncementBar";
-import { Navbar } from "@/components/layout/Navbar";
+import { NavbarClient } from "@/components/layout/NavbarClient";
 import { Footer } from "@/components/layout/Footer";
 import "./globals.css";
 
@@ -66,7 +66,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
           }}
         >
           <AnnouncementBar />
-          <Navbar />
+          <NavbarClient />
           <main className="flex w-full flex-1 flex-col">{children}</main>
           <Footer />
           {/* Floating feedback for every mutation (login, logout, admin CRUD, order

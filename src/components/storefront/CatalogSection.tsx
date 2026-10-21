@@ -3,6 +3,7 @@ import { ProductCard } from "@/components/storefront/ProductCard";
 import { SortSelect } from "@/components/storefront/SortSelect";
 import { SearchBar } from "@/components/ui/SearchBar";
 import { Pagination } from "@/components/ui/Pagination";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { getUniqueColors, getProducts, type ProductSortOption } from "@/services/productService";
 import { getCategories } from "@/services/categoryService";
 import { getTotalStock } from "@/lib/productStock";
@@ -103,6 +104,28 @@ export async function CatalogSection({
             <Pagination currentPage={page ?? 1} totalPages={totalPages} />
           </div>
         )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * `<Suspense>` fallback for `CatalogSection`, mirroring its grid shape so
+ * nothing shifts once the real products stream in. Used by the Home and
+ * `/catalogo` pages, which both read `searchParams` to build this section's
+ * filter props — wrapping it in `<Suspense>` lets everything above it
+ * (hero slider, page header) flush to the browser immediately instead of
+ * waiting on the filtered-products query.
+ */
+export function CatalogSectionSkeleton() {
+  return (
+    <section className="overflow-x-hidden py-16">
+      <div className="mx-auto max-w-7xl px-4 py-10 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <Skeleton key={index} className="aspect-square w-full" />
+          ))}
+        </div>
       </div>
     </section>
   );

@@ -11,23 +11,32 @@ import { useCartStore } from "@/store/useCartStore";
 
 interface UserMenuProps {
   user: User | null;
-  /** The user's display name, resolved from `profiles.full_name` by the `Navbar` Server Component. */
+  /** The user's display name, resolved from `profiles.full_name` by `NavbarClient`. */
   fullName: string | null;
+  /**
+   * `true` while `NavbarClient` is still resolving the client-side session.
+   * Renders a neutral placeholder instead of guessing "logged out" or
+   * "logged in", avoiding both a misleading click target and a flash from
+   * one state to the other right after mount.
+   */
+  isLoading: boolean;
 }
 
 /**
  * Account icon in the Navbar.
  *
- * `user` is resolved server-side by the `Navbar` Server Component and
- * passed down as a prop, so this component is purely synchronous — no
- * client-side session check, no loading state.
+ * `user`/`fullName` are resolved client-side by `NavbarClient` (via the
+ * browser Supabase client) and passed down as props — this component itself
+ * stays purely presentational, with three states: loading, logged out,
+ * logged in.
  *
+ * - `isLoading`: generic, non-interactive placeholder icon.
  * - `user` is `null`: plain link to `/auth/login`.
  * - `user` exists: opens a dropdown with account links + logout. `isAdmin`
  *   comes from `useAdmin` (a UX convenience only — the real admin gate is
  *   server-side, see that hook's docstring).
  */
-export function UserMenu({ user, fullName }: UserMenuProps) {
+export function UserMenu({ user, fullName, isLoading }: UserMenuProps) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [logoutSucceeded, setLogoutSucceeded] = useState(false);
@@ -51,12 +60,14 @@ export function UserMenu({ user, fullName }: UserMenuProps) {
 
   // Nuclear cache fix: a plain `router.refresh()`/`router.push()` pair still
   // goes through the Next.js client router, which was observed to keep
-  // serving the previous user's role until a hard reload. A full
-  // `window.location` navigation forces the browser to discard the React
-  // tree entirely and request a brand-new document, guaranteeing the Navbar
-  // Server Component reads the now-cleared session cookie. The navigation
-  // itself is pushed into an effect because mutating `window.location` is a
-  // side effect outside React's render/event model.
+  // serving the previous user's role until a hard reload — relevant for any
+  // still-mounted Server Component that read the session server-side (e.g.
+  // the `/admin` layout's role check), since those won't re-run on a client-
+  // only navigation. A full `window.location` navigation forces the browser
+  // to discard the React tree entirely and request a brand-new document,
+  // guaranteeing every such check re-reads the now-cleared session cookie.
+  // The navigation itself is pushed into an effect because mutating
+  // `window.location` is a side effect outside React's render/event model.
   useEffect(() => {
     if (logoutSucceeded) {
       window.location.href = "/";
@@ -85,6 +96,18 @@ export function UserMenu({ user, fullName }: UserMenuProps) {
 
     setIsMenuOpen(false);
     setLogoutSucceeded(true);
+  }
+
+  if (isLoading) {
+    // Shown while the client-side session check is in flight — same icon as
+    // the logged-out state visually, but not a link: we don't yet know
+    // whether it should point to `/auth/login` or open the account menu, so
+    // a non-interactive placeholder avoids a misleading click target.
+    return (
+      <span aria-hidden="true" className="flex items-center justify-center text-cairo-text/40">
+        <UserIcon className="h-6 w-6" />
+      </span>
+    );
   }
 
   if (!user) {

@@ -1,4 +1,5 @@
-import { CatalogSection } from "@/components/storefront/CatalogSection";
+import { Suspense } from "react";
+import { CatalogSection, CatalogSectionSkeleton } from "@/components/storefront/CatalogSection";
 import type { ProductSortOption } from "@/services/productService";
 import { readArrayParam, readNumberParam, readStringParam } from "@/lib/searchParams";
 
@@ -11,17 +12,7 @@ function readSortParam(value: string | undefined): ProductSortOption | undefined
 
 // Dedicated catalog page: same filters + grid as the Home page section, but
 // without the hero slider — just a simple, aesthetic header.
-export default async function CatalogoPage(props: PageProps<"/catalogo">) {
-  const searchParams = await props.searchParams;
-
-  const categorySlug = readStringParam(searchParams, "category");
-  const colors = readArrayParam(searchParams, "color");
-  const minPrice = readNumberParam(searchParams, "minPrice");
-  const maxPrice = readNumberParam(searchParams, "maxPrice");
-  const searchQuery = readStringParam(searchParams, "q");
-  const page = readNumberParam(searchParams, "page") ?? 1;
-  const sort = readSortParam(readStringParam(searchParams, "sort"));
-
+export default function CatalogoPage(props: PageProps<"/catalogo">) {
   return (
     <div className="overflow-x-hidden pt-12">
       <div className="mx-auto max-w-7xl px-4 text-center sm:px-6 lg:px-8">
@@ -29,17 +20,42 @@ export default async function CatalogoPage(props: PageProps<"/catalogo">) {
         <h1 className="mt-2 font-heading text-4xl text-cairo-text">Nuestro Catálogo</h1>
       </div>
 
-      <CatalogSection
-        title="Todos los productos"
-        categorySlug={categorySlug}
-        colors={colors}
-        minPrice={minPrice}
-        maxPrice={maxPrice}
-        searchQuery={searchQuery}
-        page={page}
-        sort={sort}
-        showSearchAndPagination
-      />
+      {/* `searchParams` is only read inside `FilteredCatalogSection`, behind
+          this boundary, so the header above streams immediately instead of
+          waiting on the filtered products query. */}
+      <Suspense fallback={<CatalogSectionSkeleton />}>
+        <FilteredCatalogSection searchParams={props.searchParams} />
+      </Suspense>
     </div>
+  );
+}
+
+async function FilteredCatalogSection({
+  searchParams,
+}: {
+  searchParams: PageProps<"/catalogo">["searchParams"];
+}) {
+  const resolvedSearchParams = await searchParams;
+
+  const categorySlug = readStringParam(resolvedSearchParams, "category");
+  const colors = readArrayParam(resolvedSearchParams, "color");
+  const minPrice = readNumberParam(resolvedSearchParams, "minPrice");
+  const maxPrice = readNumberParam(resolvedSearchParams, "maxPrice");
+  const searchQuery = readStringParam(resolvedSearchParams, "q");
+  const page = readNumberParam(resolvedSearchParams, "page") ?? 1;
+  const sort = readSortParam(readStringParam(resolvedSearchParams, "sort"));
+
+  return (
+    <CatalogSection
+      title="Todos los productos"
+      categorySlug={categorySlug}
+      colors={colors}
+      minPrice={minPrice}
+      maxPrice={maxPrice}
+      searchQuery={searchQuery}
+      page={page}
+      sort={sort}
+      showSearchAndPagination
+    />
   );
 }
