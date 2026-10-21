@@ -84,7 +84,12 @@ export async function CatalogSection({
               // page (right under the Hero) and `/catalogo` — it's the
               // page's actual LCP element, since `HeroSlider` renders no
               // `<Image>` of its own.
-              <ProductCard key={product.id} product={product} priority={index === 0} />
+              <ProductCard
+                key={product.id}
+                product={product}
+                priority={index === 0}
+                activeColorFilter={colors}
+              />
             ))}
           </div>
         ) : (

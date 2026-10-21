@@ -1,14 +1,21 @@
 import Link from "next/link";
 import type { Product } from "@/types";
-import { AddToCartButton } from "@/components/storefront/AddToCartButton";
-import { ProductImageCarousel } from "@/components/storefront/ProductImageCarousel";
+import { ProductCardMedia } from "@/components/storefront/ProductCardMedia";
 import { calculateDiscountedPrice } from "@/lib/utils";
-import { getAvailableDisplayVariant } from "@/lib/productStock";
+import { getAvailableDisplayVariant, matchesActiveColorFilter } from "@/lib/productStock";
+import { buildColorOptions } from "@/lib/colorOptions";
 
 interface ProductCardProps {
   product: Product;
   /** Marks this card's image as the page's LCP element (first above-the-fold card only). */
   priority?: boolean;
+  /**
+   * Colors currently selected in the catalog's color filter (e.g. from
+   * `?color=chocolate&color=negro`), if any. When set, the card prioritizes
+   * showing the matching color variant instead of the default base/first-
+   * in-stock one — see `getAvailableDisplayVariant`.
+   */
+  activeColorFilter?: string[];
 }
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
@@ -29,18 +36,32 @@ const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
  * with a transparent/cream container) is what keeps the grid looking
  * uniform across products shot against different real-world backdrops.
  */
-export function ProductCard({ product, priority = false }: ProductCardProps) {
-  const href = `/producto/${product.id}`;
+export function ProductCard({ product, priority = false, activeColorFilter }: ProductCardProps) {
   const hasDiscount = product.isDiscountActive && !!product.discountPercentage;
 
-  // Picks the first color (base color or a real variant) that still has
-  // stock, so a product whose base color sold out but still has an
-  // available variant shows that variant's photo instead of an "Agotado"
-  // badge on a color nobody can actually buy. Only `null` when every color
-  // — base included — is sold out.
-  const displayVariant = getAvailableDisplayVariant(product);
-  const outOfStock = displayVariant === null;
+  // When a color filter is active, prioritizes the matching color variant
+  // (even out of stock, so the shopper understands why this product matched
+  // their search) over the default base/first-in-stock one. `null` only
+  // when every color — base included — is sold out. See `getAvailableDisplayVariant`.
+  const displayVariant = getAvailableDisplayVariant(product, activeColorFilter);
+  const outOfStock = displayVariant === null || displayVariant.stock === 0;
   const displayImages = displayVariant && displayVariant.images.length > 0 ? displayVariant.images : product.imageUrls;
+
+  // Carries the matched color over to the product detail page so it opens
+  // already showing the same variant the card displayed. Only appended when
+  // the displayed variant actually came from the active filter — a card
+  // falling back to its default variant has nothing filter-specific to pass on.
+  const matchedFilterColor =
+    displayVariant && matchesActiveColorFilter(displayVariant.colorName, activeColorFilter)
+      ? displayVariant.colorName
+      : null;
+  const href = matchedFilterColor
+    ? `/producto/${product.id}?color=${encodeURIComponent(matchedFilterColor)}`
+    : `/producto/${product.id}`;
+
+  // Every selectable color (base + variants), used by `ProductCardMedia` to
+  // render the quick color-preview swatches below the image.
+  const colorOptions = buildColorOptions(product);
 
   const discountedPrice = calculateDiscountedPrice(
     product.price,
@@ -53,32 +74,21 @@ export function ProductCard({ product, priority = false }: ProductCardProps) {
     // `align-items: stretch`), so a short one-line title never leaves its price sitting
     // higher than a neighboring card's — see the `mt-auto` price block below.
     <article className="group flex h-full flex-col overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm transition-shadow duration-300 hover:shadow-md">
-      {/* Image frame: a strict, uniform aspect ratio so every card in the grid lines up
-          regardless of the uploaded photo's own dimensions — `object-contain` (applied inside
-          `ProductImageCarousel`/`ProductImage`) then fits a tall or wide bag inside this square
-          without cropping or stretching it. `shrink-0` keeps this frame's height fixed even if
-          the text block below grows past one line. */}
-      <div className="relative aspect-square w-full shrink-0 overflow-hidden bg-white">
-        <Link href={href} aria-label={product.name} className="absolute inset-0 z-0 block">
-          <ProductImageCarousel images={displayImages} alt={product.name} priority={priority} />
-        </Link>
-
-        {hasDiscount && (
-          <span className="absolute left-3 top-3 z-10 rounded-full bg-cairo-primary px-2.5 py-1 text-xs font-semibold text-cairo-bg">
-            -{product.discountPercentage}% OFF
-          </span>
-        )}
-
-        {outOfStock && (
-          <span className="absolute right-3 top-3 z-10 rounded-full bg-cairo-text px-2.5 py-1 text-xs font-semibold text-cairo-bg">
-            Agotado
-          </span>
-        )}
-
-        <div className="absolute bottom-3 right-3 z-10">
-          <AddToCartButton product={product} />
-        </div>
-      </div>
+      {/* Image frame + color swatches: a strict, uniform aspect ratio so every card in the
+          grid lines up regardless of the uploaded photo's own dimensions, and the quick color
+          preview swatches below it — both owned by `ProductCardMedia` so the swatch hover
+          preview can share local state with the image it controls, without turning this whole
+          card client-side. */}
+      <ProductCardMedia
+        product={product}
+        href={href}
+        images={displayImages}
+        colorOptions={colorOptions}
+        priority={priority}
+        hasDiscount={hasDiscount}
+        outOfStock={outOfStock}
+        activeColorFilter={activeColorFilter}
+      />
 
       {/* Text block: consistent padding regardless of title length. `flex-grow` lets this block
           fill whatever vertical space `h-full` leaves above, and `mt-auto` on the price pins it

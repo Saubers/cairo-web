@@ -8,6 +8,8 @@ import type { Product } from "@/types";
 
 interface AddToCartButtonProps {
   product: Product;
+  /** Forwarded from `ProductCard` so the variant resolution below stays in sync with the card's image. */
+  activeColorFilter?: string[];
 }
 
 /**
@@ -15,13 +17,13 @@ interface AddToCartButtonProps {
  * Isolated as its own Client Component so `ProductCard` itself can stay a
  * Server Component, keeping the catalog grid fully crawlable for SEO.
  */
-export function AddToCartButton({ product }: AddToCartButtonProps) {
+export function AddToCartButton({ product, activeColorFilter }: AddToCartButtonProps) {
   const addItem = useCartStore((state) => state.addItem);
-  // Same base-or-first-in-stock-variant resolution as `ProductCard`'s image,
-  // so the quick-add button's enabled state and the color it actually adds
-  // always match what the card is visually showing.
-  const displayVariant = getAvailableDisplayVariant(product);
-  const outOfStock = displayVariant === null;
+  // Same variant resolution (including the active color filter) as
+  // `ProductCard`'s image, so the quick-add button's enabled state and the
+  // color it actually adds always match what the card is visually showing.
+  const displayVariant = getAvailableDisplayVariant(product, activeColorFilter);
+  const outOfStock = displayVariant === null || displayVariant.stock === 0;
 
   function handleAddToCart(): void {
     if (outOfStock || !displayVariant) return;
