@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { MercadoPagoConfig, Payment, WebhookSignatureValidator } from "mercadopago";
 import { createServiceClient } from "@/lib/supabase/service";
 import { sendOrderConfirmationEmail } from "@/lib/email";
@@ -305,6 +305,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       revalidatePath("/catalogo");
       revalidatePath("/producto/[id]", "page");
       revalidatePath("/colecciones/[slug]", "page");
+      // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`/
+      // `getActiveProductById` (see `src/services/productService.ts`) — this
+      // runs in a Route Handler, not a Server Action, so `updateTag` (which
+      // only works inside Server Actions) is not available here; `{ expire: 0 }`
+      // expires the stale entry immediately rather than serving it once more
+      // under stale-while-revalidate, since a sold-out product must not be
+      // shown as purchasable right after this webhook runs.
+      revalidateTag("products", { expire: 0 });
 
       // A failure sending the confirmation email must never surface as a
       // webhook error — Mercado Pago retries non-2xx responses, which would

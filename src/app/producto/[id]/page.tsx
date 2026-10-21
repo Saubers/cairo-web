@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronRight, CreditCard, RotateCcw, Truck } from "lucide-react";
-import { getProductById, getRelatedProducts } from "@/services/productService";
+import { getActiveProductById, getRelatedProducts } from "@/services/productService";
 import { getCategoryById } from "@/services/categoryService";
 import { ProductVariantProvider } from "@/components/storefront/ProductVariantProvider";
 import { buildColorOptions } from "@/lib/colorOptions";
@@ -53,9 +53,9 @@ export async function generateMetadata(
   // a thrown error here is just as capable of surfacing an opaque error to
   // the crawler/browser, so it gets the same defensive try/catch as the
   // page body below instead of letting a Supabase failure bubble up raw.
-  let product: Awaited<ReturnType<typeof getProductById>>;
+  let product: Awaited<ReturnType<typeof getActiveProductById>>;
   try {
-    product = await getProductById(id);
+    product = await getActiveProductById(id);
   } catch (error) {
     console.error(`[ProductDetailPage:generateMetadata] Failed to load product "${id}":`, error);
     return { title: "Producto no encontrado" };
@@ -99,9 +99,9 @@ export default async function ProductDetailPage(props: PageProps<"/producto/[id]
   // `digest` — the pointer back to the full server log entry — instead of
   // letting it propagate, which is what surfaces to the browser as an
   // opaque, unactionable "Minified React error #441".
-  let product: Awaited<ReturnType<typeof getProductById>>;
+  let product: Awaited<ReturnType<typeof getActiveProductById>>;
   try {
-    product = await getProductById(id);
+    product = await getActiveProductById(id);
   } catch (error) {
     const digest = error instanceof Error ? (error as Error & { digest?: string }).digest : undefined;
     console.error(`[ProductDetailPage] Failed to load product "${id}" (digest: ${digest ?? "none"}):`, error);

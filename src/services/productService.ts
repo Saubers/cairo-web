@@ -1,4 +1,6 @@
+import { unstable_cache } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createPublicClient } from "@/lib/supabase/public";
 import { endOfDayIso } from "@/lib/utils";
 import type { Product, ProductVariant } from "@/types";
 
@@ -158,11 +160,17 @@ async function getProductVariants(productId: string): Promise<ProductVariant[]> 
  * evaluate stock-aware display (`getAvailableDisplayVariant`/
  * `getTotalStock` in `@/lib/productStock`) for an entire page of products
  * without firing one query per card.
+ *
+ * Uses the plain anon-key client (not the cookie-bound one) since every
+ * caller of this helper is itself wrapped in `unstable_cache` (see
+ * `fetchProducts` and `fetchActiveProductById` below), which forbids
+ * reading cookies — and `product_variants_public_read` never depends on
+ * the caller's session anyway.
  */
 async function getVariantsByProductId(productIds: string[]): Promise<Map<string, ProductVariant[]>> {
   if (productIds.length === 0) return new Map();
 
-  const supabase = await createClient();
+  const supabase = createPublicClient();
 
   const { data, error } = await supabase
     .from("product_variants")
@@ -222,13 +230,34 @@ function mapRowToProduct(row: ProductRow, variants: ProductVariant[] = []): Prod
  * filter is optional and chained only when provided, so callers can pass
  * any subset (e.g. just `minPrice`).
  *
- * Reads go through the anon key and are entirely governed by RLS (public
- * read access to active products, see docs/context/database-schema.md).
- * When a `categorySlug` is given but does not match any category, an empty
- * page is returned instead of silently falling back to all products.
+ * Cached for an hour per unique filter combination — this is the
+ * highest-traffic read in the app (backs the Home, `/catalogo`, and
+ * `/colecciones/[slug]` grids), previously hitting Supabase on every
+ * single request. `filters` is captured via closure rather than passed to
+ * the cached function directly, so it's included explicitly in the cache
+ * key (`JSON.stringify(filters)`) — required by `unstable_cache` for any
+ * closed-over value. Admin mutations in `app/admin/products/actions.ts`
+ * and `app/admin/collections/actions.ts` call `updateTag("products")` to
+ * bust this immediately after a create/update/delete.
  */
 export async function getProducts(filters: ProductFilters = {}): Promise<PaginatedProducts> {
-  const supabase = await createClient();
+  return unstable_cache(() => fetchProducts(filters), ["products", JSON.stringify(filters)], {
+    revalidate: 3600,
+    tags: ["products"],
+  })();
+}
+
+/**
+ * Uncached implementation behind the `getProducts` cache wrapper above.
+ * Reads go through the plain anon-key client (not the cookie-bound one —
+ * forbidden inside `unstable_cache`) and are entirely governed by RLS
+ * (public read access to active products, see
+ * docs/context/database-schema.md). When a `categorySlug` is given but
+ * does not match any category, an empty page is returned instead of
+ * silently falling back to all products.
+ */
+async function fetchProducts(filters: ProductFilters): Promise<PaginatedProducts> {
+  const supabase = createPublicClient();
 
   let categoryId: string | null = null;
 
@@ -344,8 +373,8 @@ function isRangeNotSatisfiableError(code: string | undefined, message: string): 
  * Used to populate the color filter UI. PostgREST has no `DISTINCT`
  * operator, so deduplication happens in memory on the (small) result set.
  */
-export async function getAvailableColors(): Promise<string[]> {
-  const supabase = await createClient();
+async function fetchAvailableColors(): Promise<string[]> {
+  const supabase = createPublicClient();
 
   const { data, error } = await supabase
     .from("products")
@@ -365,9 +394,21 @@ export async function getAvailableColors(): Promise<string[]> {
   return Array.from(new Set(colors)).sort();
 }
 
+/** Cached for an hour — see `fetchProducts` above for why a plain client is required here. */
+export const getAvailableColors = unstable_cache(fetchAvailableColors, ["available-colors"], {
+  revalidate: 3600,
+  tags: ["products"],
+});
+
 /**
  * Fetches a single product by id, regardless of `is_active`, for the admin
  * edit form. Returns `null` when no row matches.
+ *
+ * Admin-only by convention: uses the cookie-bound client so an
+ * authenticated admin session can see inactive products too (see note
+ * below), which also means this function can never be wrapped in
+ * `unstable_cache` (cookies aren't readable inside a cached function). The
+ * storefront product detail page uses `getActiveProductById` instead.
  *
  * Note: under RLS, `products_public_read` only exposes inactive products to
  * admins (`is_admin()`). Until real Supabase Auth + role wiring lands (see
@@ -393,10 +434,59 @@ export async function getProductById(id: string): Promise<Product | null> {
   // product's own base color/stock/images. If fetching them fails (schema
   // mismatch, transient Supabase error, etc.), the product itself is still
   // valid and renders fine with its base color — so the failure is logged
-  // and swallowed here instead of propagating up and crashing the whole PDP.
+  // and swallowed here instead of propagating up and crashing the admin form.
   let variants: ProductVariant[] = [];
   try {
     variants = await getProductVariants(id);
+  } catch (variantsError) {
+    console.error(`[productService] Failed to fetch variants for product "${id}":`, variantsError);
+  }
+
+  return mapRowToProduct(data, variants);
+}
+
+/**
+ * Cached, public-only counterpart to `getProductById` — used by the
+ * storefront product detail page instead. Explicitly filters
+ * `is_active = true` in the query itself (rather than relying on RLS to
+ * tell admins and shoppers apart), so the result is always identical
+ * regardless of who's viewing. That's a deliberate trade-off: an admin can
+ * no longer preview a draft/inactive product through the public PDP URL
+ * (use the admin edit form for that), but the read can now be served from
+ * Next.js' Data Cache instead of hitting Supabase on every page visit.
+ * Tagged both `"products"` (busted by any catalog-wide write) and
+ * `product-${id}` (busted surgically by `updateProduct`/`deleteProduct`
+ * for this one id).
+ */
+export async function getActiveProductById(id: string): Promise<Product | null> {
+  return unstable_cache(() => fetchActiveProductById(id), ["active-product", id], {
+    revalidate: 3600,
+    tags: ["products", `product-${id}`],
+  })();
+}
+
+async function fetchActiveProductById(id: string): Promise<Product | null> {
+  const supabase = createPublicClient();
+
+  const { data, error } = await supabase
+    .from("products")
+    .select(PRODUCT_COLUMNS)
+    .eq("id", id)
+    .eq("is_active", true)
+    .maybeSingle<ProductRow>();
+
+  if (error) {
+    throw new Error(`Failed to fetch product "${id}": ${error.message}`);
+  }
+
+  if (!data) return null;
+
+  // Reuses the bulk variant fetcher (already on the anon/public client) for
+  // a single id instead of duplicating the query — see `getVariantsByProductId`.
+  let variants: ProductVariant[] = [];
+  try {
+    const variantsByProductId = await getVariantsByProductId([id]);
+    variants = variantsByProductId.get(id) ?? [];
   } catch (variantsError) {
     console.error(`[productService] Failed to fetch variants for product "${id}":`, variantsError);
   }
@@ -502,7 +592,18 @@ export async function getRelatedProducts(
 ): Promise<Product[]> {
   if (!categoryId) return [];
 
-  const supabase = await createClient();
+  // Cached for an hour — read on every product detail page visit. Both
+  // arguments are passed into the cache key since they're closed over
+  // rather than forwarded to the wrapped function itself.
+  return unstable_cache(
+    () => fetchRelatedProducts(categoryId, excludeProductId),
+    ["related-products", categoryId, excludeProductId],
+    { revalidate: 3600, tags: ["products"] },
+  )();
+}
+
+async function fetchRelatedProducts(categoryId: string, excludeProductId: string): Promise<Product[]> {
+  const supabase = createPublicClient();
 
   const { data, error } = await supabase
     .from("products")

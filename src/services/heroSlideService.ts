@@ -1,6 +1,6 @@
-import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { unstable_cache } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createPublicClient } from "@/lib/supabase/public";
 import type { HeroSlide } from "@/types";
 
 /** Raw shape returned by Supabase for the `hero_slides` table (snake_case columns). */
@@ -75,18 +75,15 @@ export async function getHeroSlideById(id: string): Promise<HeroSlide | null> {
 
 /**
  * Uncached fetch of the active, ordered slides shown on the storefront
- * carousel. Deliberately uses a plain anon-key client instead of the
- * cookie-bound `createClient` from `@/lib/supabase/server` — Next.js
- * forbids reading cookies inside a function wrapped in `unstable_cache`,
- * and the public `hero_slides_public_read` RLS policy never depends on the
- * caller's session anyway, so a cookie-less client is both required here
- * and perfectly safe.
+ * carousel. Deliberately uses the plain anon-key `createPublicClient`
+ * instead of the cookie-bound `createClient` from `@/lib/supabase/server`
+ * — Next.js forbids reading cookies inside a function wrapped in
+ * `unstable_cache`, and the public `hero_slides_public_read` RLS policy
+ * never depends on the caller's session anyway, so a cookie-less client is
+ * both required here and perfectly safe.
  */
 async function fetchActiveHeroSlides(): Promise<HeroSlide[]> {
-  const supabase = createSupabaseClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  );
+  const supabase = createPublicClient();
 
   const { data, error } = await supabase
     .from("hero_slides")

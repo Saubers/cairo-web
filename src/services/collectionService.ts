@@ -1,4 +1,6 @@
+import { unstable_cache } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { createPublicClient } from "@/lib/supabase/public";
 import type { Collection } from "@/types";
 
 /** Raw shape returned by Supabase for the `collections` table (snake_case columns). */
@@ -49,9 +51,14 @@ export async function getAllCollectionsForAdmin(): Promise<Collection[]> {
   return (data ?? []).map(mapRowToCollection);
 }
 
-/** Fetches only active collections, for the storefront. */
-export async function getActiveCollections(): Promise<Collection[]> {
-  const supabase = await createClient();
+/**
+ * Uncached implementation behind the `getActiveCollections` cache wrapper
+ * below. Uses the plain anon-key client since it's wrapped in
+ * `unstable_cache` — the `is_active = true` filter is already explicit in
+ * the query, so this is identical for every caller regardless of role.
+ */
+async function fetchActiveCollections(): Promise<Collection[]> {
+  const supabase = createPublicClient();
 
   const { data, error } = await supabase
     .from("collections")
@@ -66,6 +73,17 @@ export async function getActiveCollections(): Promise<Collection[]> {
 
   return (data ?? []).map(mapRowToCollection);
 }
+
+/**
+ * Fetches only active collections, for the storefront `/colecciones` page
+ * and the admin product form's collection picker. Cached for an hour —
+ * `app/admin/collections/actions.ts` calls `updateTag("collections")` to
+ * bust this immediately after a create/update/delete.
+ */
+export const getActiveCollections = unstable_cache(fetchActiveCollections, ["active-collections"], {
+  revalidate: 3600,
+  tags: ["collections"],
+});
 
 /** Fetches a single collection by id, for the admin edit form. */
 export async function getCollectionById(id: string): Promise<Collection | null> {
@@ -85,13 +103,11 @@ export async function getCollectionById(id: string): Promise<Collection | null> 
 }
 
 /**
- * Fetches a single collection by slug, for the storefront detail page.
- * Deliberately does not filter by `is_active` here — the caller must check
- * `isActive` itself and 404 accordingly, so an inactive collection 404s the
- * same way for every visitor, admins included (see `/colecciones/[slug]`).
+ * Uncached implementation behind the `getCollectionBySlug` cache wrapper
+ * below.
  */
-export async function getCollectionBySlug(slug: string): Promise<Collection | null> {
-  const supabase = await createClient();
+async function fetchCollectionBySlug(slug: string): Promise<Collection | null> {
+  const supabase = createPublicClient();
 
   const { data, error } = await supabase
     .from("collections")
@@ -104,4 +120,20 @@ export async function getCollectionBySlug(slug: string): Promise<Collection | nu
   }
 
   return data ? mapRowToCollection(data) : null;
+}
+
+/**
+ * Fetches a single collection by slug, for the storefront detail page.
+ * Deliberately does not filter by `is_active` here — the caller must check
+ * `isActive` itself and 404 accordingly, so an inactive collection 404s the
+ * same way for every visitor, admins included (see `/colecciones/[slug]`) —
+ * which is exactly why this is safe to cache with the plain anon client:
+ * the result was already identical for every role before this change.
+ * Cached for an hour, same tag as `getActiveCollections`.
+ */
+export async function getCollectionBySlug(slug: string): Promise<Collection | null> {
+  return unstable_cache(() => fetchCollectionBySlug(slug), ["collection-by-slug", slug], {
+    revalidate: 3600,
+    tags: ["collections"],
+  })();
 }

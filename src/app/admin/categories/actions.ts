@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { toSafeErrorMessage, type ActionResult } from "@/lib/actionResult";
 
@@ -45,6 +45,9 @@ export async function createCategory(name: string): Promise<ActionResult> {
   revalidatePath("/admin/categories");
   revalidatePath("/");
   revalidatePath("/catalogo");
+  // Busts the Data Cache entries backing `getCategories` (see
+  // `src/services/categoryService.ts`) immediately.
+  updateTag("categories");
   return {};
 }
 
@@ -70,6 +73,9 @@ export async function updateCategory(id: string, name: string): Promise<ActionRe
   revalidatePath("/");
   revalidatePath("/catalogo");
   revalidatePath("/producto/[id]", "page");
+  // Busts `getCategories`/`getCategoryById` (name/slug changed here affect
+  // both the catalog filter and the PDP breadcrumb).
+  updateTag("categories");
   return {};
 }
 
@@ -91,5 +97,8 @@ export async function deleteCategory(id: string): Promise<ActionResult> {
   revalidatePath("/");
   revalidatePath("/catalogo");
   revalidatePath("/producto/[id]", "page");
+  // Busts `getCategories`/`getCategoryById` so the deleted category stops
+  // appearing in the storefront filter and any PDP breadcrumb immediately.
+  updateTag("categories");
   return {};
 }

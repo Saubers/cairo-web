@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { toSafeErrorMessage, type ActionResult } from "@/lib/actionResult";
 
@@ -77,6 +77,10 @@ export async function createCollection(input: CollectionFormInput): Promise<Acti
   revalidatePath("/admin/products");
   revalidatePath("/colecciones");
   revalidatePath("/colecciones/[slug]", "page");
+  // Busts `getActiveCollections`/`getCollectionBySlug` plus `getProducts`
+  // (the newly assigned products now match `collectionId` filters).
+  updateTag("collections");
+  updateTag("products");
   return {};
 }
 
@@ -134,6 +138,10 @@ export async function updateCollection(
   revalidatePath("/admin/products");
   revalidatePath("/colecciones");
   revalidatePath("/colecciones/[slug]", "page");
+  // Busts `getActiveCollections`/`getCollectionBySlug` plus `getProducts`
+  // (membership and/or name/slug/active-state changed here).
+  updateTag("collections");
+  updateTag("products");
   return {};
 }
 
@@ -150,5 +158,10 @@ export async function deleteCollection(id: string): Promise<ActionResult> {
   revalidatePath("/admin/products");
   revalidatePath("/colecciones");
   revalidatePath("/colecciones/[slug]", "page");
+  // Busts `getActiveCollections`/`getCollectionBySlug` plus `getProducts`
+  // so the deleted collection and its (now-detached) products stop
+  // appearing immediately instead of after the 1-hour TTL.
+  updateTag("collections");
+  updateTag("products");
   return {};
 }

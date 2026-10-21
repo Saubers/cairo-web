@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { toSafeErrorMessage, type ActionResult } from "@/lib/actionResult";
 import { productSchema } from "@/lib/validation/productSchema";
@@ -128,6 +128,11 @@ export async function createProduct(input: unknown): Promise<ActionResult> {
   revalidatePath("/");
   revalidatePath("/admin/products");
   revalidatePath("/catalogo");
+  // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`
+  // (see `src/services/productService.ts`) immediately — `revalidatePath`
+  // above only refreshes the page shell; without this a newly created
+  // product would stay invisible on the storefront for up to an hour.
+  updateTag("products");
   return {};
 }
 
@@ -174,6 +179,12 @@ export async function updateProduct(id: string, input: unknown): Promise<ActionR
   revalidatePath("/catalogo");
   revalidatePath("/producto/[id]", "page");
   revalidatePath("/colecciones/[slug]", "page");
+  // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`/
+  // `getActiveProductById` (see `src/services/productService.ts`) — without
+  // this an edit (price, stock, images, etc.) would stay invisible on the
+  // storefront for up to an hour.
+  updateTag("products");
+  updateTag(`product-${id}`);
   return {};
 }
 
@@ -190,6 +201,11 @@ export async function deleteProduct(id: string): Promise<ActionResult> {
   revalidatePath("/admin/products");
   revalidatePath("/catalogo");
   revalidatePath("/colecciones/[slug]", "page");
+  // Busts the Data Cache entries backing `getProducts`/`getAvailableColors`/
+  // `getActiveProductById` — a deleted product must disappear from the
+  // storefront immediately, not after the cache's 1-hour TTL.
+  updateTag("products");
+  updateTag(`product-${id}`);
   return {};
 }
 
