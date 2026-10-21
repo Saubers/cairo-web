@@ -31,7 +31,10 @@ export const checkoutSchema = z.object({
   guestAddressFloorApt: z.string().trim().max(50).optional().or(z.literal("")),
   guestAddressCity: z.string().trim().min(1, "Ingresá la localidad.").max(100),
   guestAddressState: z.string().trim().min(1, "Ingresá la provincia.").max(100),
-  guestAddressZip: z.string().trim().min(1, "Ingresá el código postal.").max(20),
+  // Exactly 4 digits: this value drives the real shipping zone/cost
+  // calculation in `/api/checkout` via `calculateShippingByPostalCode`, so
+  // it must be a well-formed Argentine postal code, not free text.
+  guestAddressZip: z.string().trim().regex(/^\d{4}$/, "El código postal debe tener 4 números."),
 });
 
 export type CheckoutFormValues = z.infer<typeof checkoutSchema>;

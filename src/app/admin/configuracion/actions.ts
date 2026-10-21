@@ -44,3 +44,51 @@ export async function updateStoreSettings(
   // revalidating for the new values to take effect.
   return {};
 }
+
+/**
+ * Updates the postal-code shipping zone pricing: the actual values
+ * `/api/checkout`, `CartSummary`, and `ShippingCalculator` use to charge/
+ * preview shipping. Kept as its own action (rather than folded into
+ * `updateStoreSettings`) so the two config blocks on `/admin/configuracion`
+ * can be saved independently.
+ */
+export async function updateShippingZoneSettings(
+  id: string,
+  localPostalCode: string,
+  shippingCostLocal: number,
+  shippingCostNear: number,
+  shippingCostFar: number,
+): Promise<ActionResult> {
+  if (!/^\d{4}$/.test(localPostalCode)) {
+    return { error: "El código postal local debe tener 4 números." };
+  }
+
+  for (const [label, value] of [
+    ["Zona local", shippingCostLocal],
+    ["Zona cercana", shippingCostNear],
+    ["Zona lejana", shippingCostFar],
+  ] as const) {
+    if (!Number.isFinite(value) || value < 0) {
+      return { error: `El costo de envío de "${label}" debe ser un número positivo.` };
+    }
+  }
+
+  const supabase = await createClient();
+
+  const { error } = await supabase
+    .from("store_settings")
+    .update({
+      local_postal_code: localPostalCode,
+      shipping_cost_local: shippingCostLocal,
+      shipping_cost_near: shippingCostNear,
+      shipping_cost_far: shippingCostFar,
+    })
+    .eq("id", id);
+
+  if (error) {
+    return { error: toSafeErrorMessage(error, "No se pudo actualizar la configuración de envíos.") };
+  }
+
+  revalidatePath("/admin/configuracion");
+  return {};
+}

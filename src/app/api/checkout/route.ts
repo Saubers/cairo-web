@@ -3,7 +3,11 @@ import { MercadoPagoConfig, Preference } from "mercadopago";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
 import { calculateDiscountedPrice } from "@/lib/utils";
-import { calculateShipping, FREE_SHIPPING_THRESHOLD, FLAT_SHIPPING_RATE } from "@/lib/shipping";
+import {
+  calculateShippingByPostalCode,
+  DEFAULT_SHIPPING_ZONE_SETTINGS,
+  type ShippingZoneSettings,
+} from "@/lib/shippingZones";
 import { checkoutSchema, type CheckoutFormValues } from "@/lib/validation/checkoutSchema";
 
 // Forces this route to always run per-request rather than being evaluated
@@ -62,8 +66,10 @@ interface VariantStockRow {
 }
 
 interface StoreSettingsRow {
-  free_shipping_threshold: number;
-  flat_shipping_rate: number;
+  local_postal_code: string;
+  shipping_cost_local: number;
+  shipping_cost_near: number;
+  shipping_cost_far: number;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -207,22 +213,30 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
             .in("id", variantIds)
             .returns<VariantStockRow[]>()
         : Promise.resolve({ data: [] as VariantStockRow[], error: null }),
-      // [CRITICAL] Shipping config is read fresh from `store_settings` here —
-      // never trusted from the client — so an admin's edit on
-      // `/admin/configuracion` takes effect on the very next checkout without
-      // a deploy. Falls back to the hardcoded constants only if the row is
-      // somehow missing.
-      service.from("store_settings").select("free_shipping_threshold, flat_shipping_rate").limit(1).maybeSingle<StoreSettingsRow>(),
+      // [CRITICAL] Shipping zone pricing is read fresh from `store_settings`
+      // here — never trusted from the client — so an admin's edit on
+      // `/admin/configuracion` takes effect on the very next checkout
+      // without a deploy. Falls back to the hardcoded defaults only if the
+      // row is somehow missing.
+      service
+        .from("store_settings")
+        .select("local_postal_code, shipping_cost_local, shipping_cost_near, shipping_cost_far")
+        .limit(1)
+        .maybeSingle<StoreSettingsRow>(),
     ]);
 
   if (productsError || variantsError) {
     return NextResponse.json({ error: "Failed to validate cart items." }, { status: 500 });
   }
 
-  const freeShippingThreshold = storeSettings
-    ? Number(storeSettings.free_shipping_threshold)
-    : FREE_SHIPPING_THRESHOLD;
-  const flatShippingRate = storeSettings ? Number(storeSettings.flat_shipping_rate) : FLAT_SHIPPING_RATE;
+  const shippingZoneSettings: ShippingZoneSettings = storeSettings
+    ? {
+        localPostalCode: storeSettings.local_postal_code,
+        shippingCostLocal: Number(storeSettings.shipping_cost_local),
+        shippingCostNear: Number(storeSettings.shipping_cost_near),
+        shippingCostFar: Number(storeSettings.shipping_cost_far),
+      }
+    : DEFAULT_SHIPPING_ZONE_SETTINGS;
 
   const productById = new Map((products ?? []).map((product) => [product.id, product]));
   const variantById = new Map((variants ?? []).map((variant) => [variant.id, variant]));
@@ -294,11 +308,13 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
   }
 
   // [CRITICAL] Shipping, like unit prices above, is never trusted from the
-  // client: it's derived here from the server-recomputed `subtotal` and the
-  // live `store_settings` row fetched above.
+  // client: it's derived here from the shopper's postal code (validated by
+  // `checkoutSchema` to be exactly 4 digits) and the live `store_settings`
+  // zone pricing fetched above — the client's own estimate (shown in
+  // `CartSummary`) is only a preview.
   const subtotal = orderItems.reduce((sum, item) => sum + item.subtotal, 0);
-  const shipping = calculateShipping(subtotal, freeShippingThreshold, flatShippingRate);
-  const total = shipping.total;
+  const shipping = calculateShippingByPostalCode(parsed.contact.guestAddressZip, shippingZoneSettings);
+  const total = subtotal + shipping.price;
 
   const { contact } = parsed;
 
@@ -362,19 +378,19 @@ async function handleCheckout(request: Request): Promise<NextResponse> {
             unit_price: Number(item.unit_price),
             currency_id: "ARS",
           })),
-          // Flat-rate shipping is charged as its own line item rather than via
+          // Shipping is charged as its own line item rather than via
           // `shipments.cost`, since it's broadly supported by Checkout Pro and
           // keeps the total Mercado Pago charges in sync with `orders.total`
-          // without needing a separate shipments object. Omitted entirely once
-          // the subtotal clears the free-shipping threshold.
-          ...(shipping.isFree
+          // without needing a separate shipments object. Omitted entirely for
+          // the local/free zone (`shipping.price === 0`).
+          ...(shipping.price === 0
             ? []
             : [
                 {
                   id: "shipping",
-                  title: "Envío a Domicilio",
+                  title: shipping.message,
                   quantity: 1,
-                  unit_price: shipping.cost,
+                  unit_price: shipping.price,
                   currency_id: "ARS",
                 },
               ]),

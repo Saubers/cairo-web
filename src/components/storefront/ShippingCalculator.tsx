@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { Truck, X } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { calculateShippingByPostalCode, type ShippingZoneEstimate } from "@/lib/shippingZones";
+import { useStoreSettings } from "@/hooks/useStoreSettings";
 
 const PRICE_FORMATTER = new Intl.NumberFormat("es-AR", {
   style: "currency",
@@ -42,11 +43,38 @@ export function ShippingCalculator() {
   const [postalCode, setPostalCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // The last successfully calculated estimate and the postal code it belongs
-  // to. Unlike `postalCode` (the live modal input), these represent the
-  // persisted result and must survive the modal being closed.
-  const [estimate, setEstimate] = useState<ShippingZoneEstimate | null>(null);
+  // The postal code a persisted estimate belongs to. Unlike `postalCode`
+  // (the live modal input), this represents the persisted result and must
+  // survive the modal being closed.
   const [confirmedCp, setConfirmedCp] = useState<string | null>(null);
+
+  // Live `store_settings` zone pricing — read here so the estimate below
+  // always reflects whatever an admin has configured on `/admin/configuracion`,
+  // not hardcoded prices.
+  const { localPostalCode, shippingCostLocal, shippingCostNear, shippingCostFar } = useStoreSettings();
+
+  // Pure derivation from `confirmedCp` + the live zone settings, recomputed
+  // on every render where either changes — e.g. once `useStoreSettings`'s
+  // own fetch resolves with the real admin-configured prices. Not stored in
+  // its own `useState`/`useEffect` pair: it has no identity of its own
+  // beyond these two inputs, so syncing it via an effect would just be an
+  // unnecessary extra render.
+  const estimate = useMemo<ShippingZoneEstimate | null>(() => {
+    if (!confirmedCp) return null;
+
+    try {
+      return calculateShippingByPostalCode(confirmedCp, {
+        localPostalCode,
+        shippingCostLocal,
+        shippingCostNear,
+        shippingCostFar,
+      });
+    } catch {
+      // `confirmedCp` is no longer a valid 4-digit CP (e.g. corrupted
+      // storage) — the plain "Calcular envío" trigger is a safe fallback.
+      return null;
+    }
+  }, [confirmedCp, localPostalCode, shippingCostLocal, shippingCostNear, shippingCostFar]);
 
   // On mount, try to restore a previously saved postal code: the Supabase
   // account's metadata takes priority over the device-local fallback, since
@@ -63,13 +91,10 @@ export function ShippingCalculator() {
         const savedCp = accountCp ?? localStorage.getItem(LOCAL_STORAGE_KEY) ?? undefined;
 
         if (savedCp) {
-          const result = calculateShippingByPostalCode(savedCp);
-          setEstimate(result);
           setConfirmedCp(savedCp);
         }
       } catch {
-        // Saved postal code is no longer valid (e.g. corrupted storage), or
-        // the session lookup failed — ignore it silently, the plain
+        // Session lookup failed — ignore it silently, the plain
         // "Calcular envío" trigger is still a safe fallback.
       } finally {
         // Set after the restore attempt (success or not) settles, rather
@@ -93,8 +118,9 @@ export function ShippingCalculator() {
   function handleClose(): void {
     setIsOpen(false);
     setError(null);
-    // `estimate`/`confirmedCp` are intentionally NOT reset here — they're the
-    // persisted result and must remain visible after the modal closes.
+    // `confirmedCp` is intentionally NOT reset here — it's the persisted
+    // result (which derives `estimate`, see the `useMemo` above) and must
+    // remain visible after the modal closes.
   }
 
   // Lock background scroll while the modal is open.
@@ -122,21 +148,27 @@ export function ShippingCalculator() {
   }, [isOpen]);
 
   async function handleCalculate(): Promise<void> {
-    let result: ShippingZoneEstimate;
     try {
-      result = calculateShippingByPostalCode(postalCode);
+      // Validates the CP up front so an invalid format shows an inline
+      // error instead of silently setting `confirmedCp` — the `estimate`
+      // itself is derived by the `useMemo` above once `confirmedCp` is set,
+      // so it always uses the latest `store_settings` prices.
+      calculateShippingByPostalCode(postalCode, {
+        localPostalCode,
+        shippingCostLocal,
+        shippingCostNear,
+        shippingCostFar,
+      });
     } catch (caughtError) {
       const message =
         caughtError instanceof Error
           ? caughtError.message
           : "Ingresá un código postal válido de 4 números.";
       setError(message);
-      setEstimate(null);
       setConfirmedCp(null);
       return;
     }
 
-    setEstimate(result);
     setConfirmedCp(postalCode);
     setError(null);
 

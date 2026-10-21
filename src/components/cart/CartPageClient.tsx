@@ -97,8 +97,13 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
   const {
     register,
     handleSubmit,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<CheckoutFormValues>({ resolver: zodResolver(checkoutSchema) });
+
+  // Live postal code value, watched so `CartSummary`'s shipping cost/total
+  // recalculates on every keystroke instead of only on submit.
+  const watchedPostalCode = watch("guestAddressZip");
 
   const subtotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
@@ -421,7 +426,7 @@ export function CartPageClient({ isLoggedIn }: CartPageClientProps) {
                 </div>
               </div>
 
-              <CartSummary subtotal={subtotal}>
+              <CartSummary subtotal={subtotal} postalCode={watchedPostalCode}>
                 {hasStockIssue && (
                   <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
                     Revisá las cantidades marcadas arriba: superan el stock disponible.
