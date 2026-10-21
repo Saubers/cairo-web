@@ -33,12 +33,17 @@ export const metadata: Metadata = {
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
-  // Fetched here, server-side, on every request (de-duped via React's
-  // `cache()` with any other `getStoreSettings()` call in the same request,
-  // e.g. `/admin/configuracion`'s own page-level read) so every client
-  // component downstream reads the real, admin-configured shipping settings
-  // through `StoreSettingsProvider` from its very first render — no client
-  // fetch, no default-then-real flash, no hydration mismatch.
+  // [PERF] `getStoreSettings()` is served from a module-scoped, in-memory
+  // TTL cache (see `storeSettingsService.ts`), so this resolves without a
+  // Supabase round-trip on every request except a rare cache miss (cold
+  // start, past the TTL, or right after an admin save). That distinction
+  // matters specifically because this runs in `RootLayout`, i.e. on every
+  // single route in the app: an uncached await here previously added a live
+  // DB round-trip to every page load site-wide, which is what tripped
+  // Cloudflare's Worker CPU/wall-time limit (error 1102). Every client
+  // component downstream still reads the real, admin-configured shipping
+  // settings through `StoreSettingsProvider` from its very first render —
+  // no client fetch, no default-then-real flash, no hydration mismatch.
   const storeSettings = await getStoreSettings();
 
   return (

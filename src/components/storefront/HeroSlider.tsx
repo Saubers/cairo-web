@@ -60,7 +60,12 @@ export function HeroSlider({ slides }: HeroSliderProps) {
   if (slides.length === 0) return null;
 
   return (
-    <section className="relative h-[80vh] w-full overflow-hidden">
+    // Height is a viewport-relative ratio at every breakpoint, never derived
+    // from the uploaded image's natural dimensions — this is what keeps the
+    // carousel's layout stable across admin-uploaded images of any
+    // resolution/aspect ratio (e.g. 1920x1080 vs 1920x800) without layout
+    // shift between mobile and desktop.
+    <section className="relative h-[60vh] w-full overflow-hidden md:h-[70vh] lg:h-[80vh]">
       <div ref={emblaRef} className="h-full w-full">
         <div className="flex h-full">
           {slides.map((slide, index) => {
@@ -72,8 +77,17 @@ export function HeroSlider({ slides }: HeroSliderProps) {
                   src={slide.imageUrl}
                   alt={slide.title ?? ""}
                   fill
+                  // Only the first (above-the-fold) slide is eagerly
+                  // preloaded for LCP — the rest stay lazy since they're
+                  // hidden off-screen until the user/autoplay reaches them.
                   priority={index === 0}
-                  className="object-cover"
+                  // `fill` + `object-cover object-center` makes the image
+                  // behave like a background photo: it always fills the
+                  // viewport-relative container above and crops any excess
+                  // evenly from the center, so it's never stretched or
+                  // squashed regardless of the uploaded resolution/aspect
+                  // ratio.
+                  className="object-cover object-center"
                 />
                 {/* Darkens the admin-uploaded photo just enough to keep the text
                     overlay legible regardless of how bright/busy the image is. */}
